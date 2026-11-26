@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GhostForge - Editor Automa Dark</title>
+    <link rel="stylesheet" href="/static/ghostforge.css?v=3">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            950: '#030303',
+                            900: '#0a0a0c',
+                            850: '#111114',
+                            800: '#16161b',
+                            700: '#23232b',
+                            600: '#32323f'
+                        },
+                        brand: {
+                            400: '#FF8469',
+                            500: '#FF5A36',
+                            600: '#E04A2A',
+                            red: '#FF1744'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #08080a;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+        }
+        .term-scroll::-webkit-scrollbar { width: 5px; height: 5px; }
+        .term-scroll::-webkit-scrollbar-track { background: #0c0c10; }
+        .term-scroll::-webkit-scrollbar-thumb { background: #23232b; border-radius: 3px; }
+
+        .video-card-thumb {
+            width: 100%;
+            aspect-ratio: 9 / 16;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+            border-radius: 4px;
+        }
+
+        .preview-pane-container {
+            width: 280px;
+            aspect-ratio: 9 / 16;
+            position: relative;
+            background: #000;
+            overflow: hidden;
+            border-radius: 8px;
+            border: 1px solid #23232b;
+            box-shadow: 0 10px 40px -10px rgba(255, 90, 54, 0.15);
+        }
+
+        /* 
+         * Parity CSS with FFmpeg:
+         * The container is the 1080x1920 canvas.
+         * The template can be layered on top (z-index 20) or bottom (z-index 0) depending on comp_mode.
+         * The video receives translate, scale, and clip-path for crop.
+         */
+        #previewCanvasWrapper {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        #mainPreviewVideo {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.15s ease-out, clip-path 0.15s ease-out;
+        }
+
+        .preview-pane-template {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            pointer-events: none;
+            transition: z-index 0.1s;
+        }
+
+        input[type=range] {
+            height: 4px;
+            border-radius: 2px;
+            background: #23232b;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #FF5A36;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="forge-editor text-gray-200" data-cloud="{{ 'true' if production_mode else 'false' }}">
+    <header class="forge-header">
+        <a class="forge-brand" href="/"><img src="/static/logo.jpg" alt=""><span>GhostForge</span></a>
+        {% if explorer_path %}
+        <nav class="forge-nav" aria-label="Áreas do GhostForge">
+            <a href="/" aria-current="page">Editor</a>
+            <a href="{{ explorer_path }}">Explorar Reels</a>
+        </nav>
+        {% endif %}
+        <span id="queueCounter" class="forge-header-state" aria-live="polite">0 vídeos na fila</span>
+        {% if production_mode %}
+        <form action="/logout" method="post"><button class="text-sm text-gray-300 hover:text-white">Sair</button></form>
+        {% endif %}
+    </header>
+
+    <!-- Main Workspace (Full Screen Height) -->
+    <div class="forge-workspace">
+
+        <!-- Left Sidebar: Controls -->
+        <aside class="forge-assets forge-panel term-scroll" aria-labelledby="batch-title">
+            <h2 class="forge-panel-title" id="batch-title">Produção em lote</h2>
+
+            <div class="w-full bg-dark-700 h-1 rounded-full overflow-hidden mb-3">
+                <div id="progressBar" class="bg-brand-500 h-full w-0 transition-all duration-300"></div>
+            </div>
+
+            <!-- File Inputs & System Folders -->
+            <input type="file" id="videoFileInput" multiple accept="video/*" class="hidden">
+            <input type="file" id="templateFileInput" accept="image/png,image/jpeg" class="hidden">
+
+            <div class="space-y-1.5 mb-3">
+                <button onclick="document.getElementById('videoFileInput').click()" class="w-full py-2 px-3 rounded bg-dark-800 hover:bg-dark-700 border border-dark-700 text-gray-200 font-medium flex items-center justify-center gap-2 transition-all">
+                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M7 16a4 4 0 01-.88-7.9A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    <span>Adicionar vídeos</span>
+                </button>
+
+                <button onclick="document.getElementById('templateFileInput').click()" class="w-full py-2 px-3 rounded bg-dark-800 hover:bg-dark-700 border border-dark-700 text-gray-200 font-medium flex items-center justify-center gap-2 transition-all">
+                    <svg class="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    <span>Adicionar template</span>
+                </button>
+
+                <div class="grid grid-cols-2 gap-1.5 pt-0.5">
+                    <button onclick="openSystemFolder('input')" title="Abrir pasta com vídeos enviados" class="py-1.5 px-2 rounded bg-dark-800 hover:bg-dark-700 border border-dark-700 text-[11px] text-gray-300 flex items-center justify-center gap-1.5 transition-all">
+                        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        <span>Entrada</span>
+                    </button>
+                    <button onclick="openSystemFolder('output')" title="Abrir pasta de vídeos renderizados" class="py-1.5 px-2 rounded bg-dark-800 hover:bg-dark-700 border border-dark-700 text-[11px] text-brand-400 flex items-center justify-center gap-1.5 transition-all">
+                        <svg class="w-3.5 h-3.5 text-brand-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        <span>Saída</span>
+                    </button>
+                </div>
+            </div>
+
+            <button id="btnProcessAll" class="w-full py-3 px-4 rounded bg-brand-500 hover:bg-brand-600 text-black font-bold text-sm tracking-wide flex items-center justify-center gap-2 transition-all shadow-lg shadow-brand-500/20 mb-3">
+                <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <span id="btnProcessText">Renderizar lote</span>
+            </button>
+
+            <div class="bg-dark-850 p-3 rounded-lg border border-dark-700 mb-3 space-y-2">
+                <div class="flex justify-between items-center text-[11px] font-medium text-gray-300">
+                    <span>Posição Y Global (Y-Offset):</span>
+                    <span id="globalYLabel" class="text-brand-500 font-mono font-bold">0</span>
+                </div>
+                <input type="range" id="globalYSlider" min="-1000" max="1000" step="5" value="0" class="w-full">
+                <button onclick="autoCropAll()" class="w-full py-1.5 mt-2 rounded bg-brand-500/10 text-brand-500 border border-brand-500/20 hover:bg-brand-500/30 text-[10px] font-bold tracking-wide flex items-center justify-center gap-1.5 transition-all">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    AUTO-CROP INTELIGENTE
+                </button>
+            </div>
+
+            <!-- Geração em Massa de Legendas -->
+            <div class="bg-dark-850 p-3 rounded-lg border border-dark-700 mb-3 space-y-2">
+                <div class="text-[11px] font-medium text-gray-300 mb-1">Frases Virais em Lote (1 por linha):</div>
+                <textarea id="batchCaptions" rows="4" class="w-full bg-dark-900 border border-dark-700 rounded p-2 text-gray-200 resize-none font-mono text-[9px] leading-relaxed" placeholder="1 frase por linha">Essa é uma boa pedida para hoje!
+Te indicamos os melhores filmes e séries aqui.
+Um filme que vai prender sua atenção do início ao fim!
+Já salva essa indicação para não esquecer depois.
+Essa cena é simplesmente espetacular!</textarea>
+                <button onclick="applyBatchCaptionsAndLayout()" class="w-full py-1.5 mt-2 rounded bg-yellow-400/10 text-yellow-500 border border-yellow-400/20 hover:bg-yellow-400/20 text-[10px] font-bold tracking-wide flex items-center justify-center gap-1.5 transition-all">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                    APLICAR LEGENDAS NOS VÍDEOS
+                </button>
+            </div>
+
+            <div class="bg-dark-850 p-3 rounded-lg border border-dark-700 mb-3 space-y-2">
+                <label class="block text-[11px] font-medium text-gray-300">Cor de fundo / borda:</label>
+                <div class="flex gap-2">
+                    <input type="color" id="globalBgColor" value="#000000" class="w-8 h-8 rounded bg-transparent border border-dark-700 cursor-pointer">
+                    <select onchange="document.getElementById('globalBgColor').value = this.value; updateAllVideoBgs();" class="flex-1 bg-dark-800 border border-dark-700 rounded px-2 text-gray-300 text-xs">
+                        <option value="#000000">Preto Puro (#000000)</option>
+                        <option value="#FFFFFF">Branco (#FFFFFF)</option>
+                        <option value="#111114">Cinza Escuro (#111114)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="bg-dark-850 p-3 rounded-lg border border-dark-700 space-y-2 mb-3">
+                <div class="text-[11px] font-medium text-gray-300 mb-1">Qualidade e Efeitos:</div>
+                <div class="flex gap-3 text-xs text-gray-400 mb-2">
+                    <label class="flex items-center gap-1 cursor-pointer"><input type="radio" name="qual" value="720p" class="accent-brand-500"> 720p</label>
+                    <label class="flex items-center gap-1 cursor-pointer"><input type="radio" name="qual" value="1080p" checked class="accent-brand-500 font-bold text-white"> 1080p</label>
+                </div>
+                <div class="pt-2 border-t border-dark-700 space-y-1.5">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="chkNoBorder" class="accent-brand-500">
+                        <span class="text-gray-300 text-[11px]">Sem Bordas (Preencher área)</span>
+                    </label>
+                    {% if not production_mode %}
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="chkAntiHash" checked class="accent-brand-500">
+                        <span class="text-brand-500 font-medium text-[11px]">Anti-Duplicidade</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="chkAmdGpu" checked class="accent-brand-500">
+                        <span class="text-blue-400 font-medium text-[11px]">Aceleração GPU (AMD RX 580 - AMF)</span>
+                    </label>
+                    {% endif %}
+                </div>
+            </div>
+
+            <details class="forge-log">
+                <summary>Log de processamento</summary>
+                <div id="terminalLog" class="p-2 bg-[#050507] border border-dark-700 rounded h-24 overflow-y-auto term-scroll font-mono text-[10px] text-gray-400 whitespace-pre-wrap break-words">Pronto...</div>
+            </details>
+            {% if production_mode %}
+            <details class="forge-log" id="cloudHistory">
+                <summary>Lotes no GitHub Actions</summary>
+                <div id="cloudBatches" class="space-y-2 mt-2"></div>
+                <div id="cloudResults" class="space-y-2 mt-2" aria-live="polite"></div>
+            </details>
+            {% endif %}
+
+        </aside>
+
+        <!-- Center: Batch Grid View -->
+        <main class="forge-main">
+            <section class="forge-stage forge-panel" aria-labelledby="preview-title">
+                <div class="forge-section-head">
+                    <div class="min-w-0">
+                        <h1 id="preview-title">Prévia</h1>
+                        <p id="activePreviewName" title="">Nenhum vídeo selecionado</p>
+                    </div>
+                    <span class="forge-format">9:16</span>
+                </div>
+                <div class="forge-stage-surface">
+                    <div class="preview-pane-container" id="livePreviewBox">
+                        <div class="forge-preview-empty">
+                            <button type="button" onclick="document.getElementById('videoFileInput').click()">Adicionar vídeo à prévia</button>
+                        </div>
+                        <div id="previewCanvasWrapper">
+                            <video id="mainPreviewVideo" controls autoplay loop playsinline class="outline-none z-10"></video>
+                        </div>
+                        <img id="mainPreviewTemplate" class="preview-pane-template hidden" alt="" style="pointer-events: none;">
+                    </div>
+                </div>
+            </section>
+            <section class="forge-queue forge-panel" aria-labelledby="queue-title">
+            <div class="forge-section-head forge-queue-head">
+                <h2 id="queue-title">Fila de vídeos</h2>
+                <div class="flex items-center gap-3">
+                    <select id="gridColsSelect" aria-label="Colunas da fila" onchange="updateGridColumns(this.value)" class="bg-dark-800 border border-dark-700 rounded px-2 py-1 text-gray-300">
+                        <option value="3">3 colunas</option>
+                        <option value="4" selected>4 colunas</option>
+                        <option value="5">5 colunas</option>
+                        <option value="6">6 colunas</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="clearAllVideosQueue()" class="py-1 px-2.5 bg-brand-red/10 hover:bg-brand-red/20 text-brand-red border border-brand-red/20 font-bold rounded text-xs flex items-center gap-1.5 transition-all">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        <span>Limpar Fila</span>
+                    </button>
+                    <button onclick="reloadState()" class="py-1 px-3 bg-dark-800 hover:bg-dark-700 text-gray-200 border border-dark-700 font-semibold rounded transition-all">Recarregar</button>
+                </div>
+            </div>
+
+            <!-- Video Cards Grid -->
+            <div id="videoGridContainer" class="forge-queue-grid term-scroll"></div>
+            </section>
+        </main>
+
+        <!-- Right Preview Sidebar: Advanced Unitary View -->
+        <aside class="forge-inspector forge-panel term-scroll" aria-labelledby="inspector-title">
+            <h2 id="inspector-title" class="forge-panel-title">Ajustes do vídeo</h2>
+
+            <!-- Compact Properties Area with Sub-Tabs -->
+            <div class="w-full flex flex-col space-y-3">
+                
+                <!-- Action Buttons (Render & Output) - Compact -->
+                <div class="flex gap-1.5 shrink-0">
+                    <button onclick="renderSingleActive()" id="btnRenderSingle" class="flex-1 py-1.5 px-2 bg-brand-500 hover:bg-brand-600 text-black font-bold text-[10px] rounded flex items-center justify-center gap-1.5 transition-colors">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                        <span>Renderizar vídeo</span>
+                    </button>
+                    <button onclick="openSystemFolder('output')" title="Abrir pasta com vídeos salvos (Output)" class="py-1.5 px-2.5 bg-dark-800 hover:bg-dark-700 border border-dark-700 text-brand-500 font-bold text-[10px] rounded flex items-center justify-center gap-1 transition-all shrink-0">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        <span>SAÍDA</span>
+                    </button>
+                </div>
+
+                <!-- Sub-Tabs Navigation Header -->
+                <div class="grid grid-cols-3 gap-1 bg-dark-950 p-1 rounded-lg border border-dark-700 shrink-0">
+                    <button onclick="switchRightTab('legenda')" id="tabBtn-legenda" class="py-1 text-[10px] font-bold rounded transition-all bg-dark-800 text-brand-500 border border-dark-600 shadow-sm">
+                        Legenda
+                    </button>
+                    <button onclick="switchRightTab('composicao')" id="tabBtn-composicao" class="py-1 text-[10px] font-bold rounded transition-all text-gray-400 hover:text-gray-200">
+                        Composição
+                    </button>
+                    <button onclick="switchRightTab('transform')" id="tabBtn-transform" class="py-1 text-[10px] font-bold rounded transition-all text-gray-400 hover:text-gray-200">
+                        Transformações
+                    </button>
+                </div>
+
+                <!-- Tab Content Pane Container -->
+                <div class="flex-1 overflow-y-auto term-scroll">
+                    
+                    <!-- Tab 1: Legenda -->
+                    <div id="tabPane-legenda" class="space-y-2 text-xs bg-dark-850 p-3 rounded-lg border border-dark-700">
+                        <div class="flex items-center justify-between mb-1">
+                            <div class="text-xs font-medium text-gray-300">Texto da legenda</div>
+                            <button onclick="generateCaptionAndLayout()" class="py-1 px-2 rounded border border-dark-600 bg-dark-800 hover:bg-dark-700 text-brand-400 text-xs font-semibold transition-all flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                Gerar e ajustar
+                            </button>
+                        </div>
+                        <textarea id="captionText" rows="3" class="w-full bg-dark-900 border border-dark-700 rounded p-2 text-gray-200 resize-none font-mono text-[10px] leading-relaxed" placeholder="Digite o título. Ex: QUANDO VOCÊ DESCOBRE..."></textarea>
+                    </div>
+
+                    <!-- Tab 2: Modo de Composição -->
+                    <div id="tabPane-composicao" class="hidden space-y-3 text-xs bg-dark-850 p-3 rounded-lg border border-dark-700">
+                        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Modo de Camada</div>
+                        <div class="flex flex-col gap-2 text-[11px]">
+                            <label class="flex items-center gap-2 cursor-pointer p-1.5 rounded hover:bg-dark-800 transition-colors">
+                                <input type="radio" name="compMode" value="overlay" class="accent-brand-500" onchange="updateMode(this.value)">
+                                <span class="text-gray-300">Sobreposição (Vídeo por cima)</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer p-1.5 rounded hover:bg-dark-800 transition-colors">
+                                <input type="radio" name="compMode" value="crop_template" class="accent-brand-500" onchange="updateMode(this.value)">
+                                <span class="text-gray-300">Crop + Template (Template por cima)</span>
+                            </label>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-dark-700">
+                            <button onclick="centerCardXY(activeVideo)" class="py-1.5 rounded bg-dark-800 hover:bg-dark-700 border border-dark-600 text-gray-300 font-bold text-[10px]">CENTRALIZAR</button>
+                            <button onclick="resetUnitary()" class="py-1.5 rounded bg-brand-red/10 hover:bg-brand-red/20 border border-brand-red/20 text-brand-red font-bold text-[10px]">RESETAR</button>
+                        </div>
+                    </div>
+
+                    <!-- Tab 3: Transformações e Crop -->
+                    <div id="tabPane-transform" class="hidden space-y-3 text-xs bg-dark-850 p-3 rounded-lg border border-dark-700">
+                        <div class="flex items-center justify-between mb-1">
+                            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Ajustes Manuais</div>
+                            <button onclick="autoCropActive()" class="py-1 px-2 rounded bg-brand-500 text-black text-[9px] font-bold hover:bg-brand-600 transition-all flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                AUTO-CROP
+                            </button>
+                        </div>
+                        
+                        <div>
+                            <label class="flex justify-between text-[10px] text-gray-400 mb-1">
+                                <span>Posição X:</span>
+                                <span id="valX" class="text-brand-500 font-mono">0px</span>
+                            </label>
+                            <input type="range" id="sliderX" min="-1000" max="1000" step="5" value="0" class="w-full">
+                        </div>
+                        
+                        <div>
+                            <label class="flex justify-between text-[10px] text-gray-400 mb-1">
+                                <span>Posição Y:</span>
+                                <span id="valY" class="text-brand-500 font-mono">0px</span>
+                            </label>
+                            <input type="range" id="sliderY" min="-1000" max="1000" step="5" value="0" class="w-full">
+                        </div>
+
+                        <div>
+                            <label class="flex justify-between text-[10px] text-gray-400 mb-1">
+                                <span>Escala:</span>
+                                <span id="valScale" class="text-brand-500 font-mono">1.00x</span>
+                            </label>
+                            <input type="range" id="sliderScale" min="0.1" max="3.0" step="0.05" value="1.0" class="w-full">
+                        </div>
+
+                        <div class="border-t border-dark-700 pt-2">
+                            <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Crop do Vídeo (%)</div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="flex justify-between text-[9px] text-gray-400 mb-1">
+                                        <span>Topo</span>
+                                        <span id="valCropT">0%</span>
+                                    </label>
+                                    <input type="range" id="cropT" min="0" max="50" step="1" value="0" class="w-full">
+                                </div>
+                                <div>
+                                    <label class="flex justify-between text-[9px] text-gray-400 mb-1">
+                                        <span>Baixo</span>
+                                        <span id="valCropB">0%</span>
+                                    </label>
+                                    <input type="range" id="cropB" min="0" max="50" step="1" value="0" class="w-full">
+                                </div>
+                                <div>
+                                    <label class="flex justify-between text-[9px] text-gray-400 mb-1">
+                                        <span>Esq.</span>
+                                        <span id="valCropL">0%</span>
+                                    </label>
+                                    <input type="range" id="cropL" min="0" max="50" step="1" value="0" class="w-full">
+                                </div>
+                                <div>
+                                    <label class="flex justify-between text-[9px] text-gray-400 mb-1">
+                                        <span>Dir.</span>
+                                        <span id="valCropR">0%</span>
+                                    </label>
+                                    <input type="range" id="cropR" min="0" max="50" step="1" value="0" class="w-full">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full"></div>
+
+    <script>
+        const cloudMode = document.body.dataset.cloud === 'true';
+        let videos = [];
+        let templatePath = null;
+        let configs = {};
+        let activeVideo = null;
+        let isProcessing = false;
+
+        const mainVideo = document.getElementById('mainPreviewVideo');
+        const mainTemplate = document.getElementById('mainPreviewTemplate');
+        
+        // Toast Notification System
+        function showToast(title, message = '', type = 'success', duration = 4000, action = null) {
+            const container = document.getElementById('toastContainer');
+            if (!container) return;
+
+            const toast = document.createElement('div');
+            toast.className = 'pointer-events-auto bg-dark-850/95 backdrop-blur-md border rounded-lg p-3 shadow-2xl flex items-start gap-3 transform translate-x-8 opacity-0 transition-all duration-300';
+            
+            let iconSvg = '';
+            let borderClass = 'border-dark-700';
+            let titleColor = 'text-gray-200';
+
+            if (type === 'success') {
+                borderClass = 'border-brand-500/40';
+                titleColor = 'text-brand-500';
+                iconSvg = `<div class="w-7 h-7 rounded-full bg-brand-500/15 text-brand-500 flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
+                </div>`;
+            } else if (type === 'error') {
+                borderClass = 'border-brand-red/40';
+                titleColor = 'text-brand-red';
+                iconSvg = `<div class="w-7 h-7 rounded-full bg-brand-red/15 text-brand-red flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </div>`;
+            } else if (type === 'warning') {
+                borderClass = 'border-yellow-500/40';
+                titleColor = 'text-yellow-500';
+                iconSvg = `<div class="w-7 h-7 rounded-full bg-yellow-500/15 text-yellow-500 flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </div>`;
+            } else {
+                borderClass = 'border-blue-500/40';
+                titleColor = 'text-blue-400';
+                iconSvg = `<div class="w-7 h-7 rounded-full bg-blue-500/15 text-blue-400 flex items-center justify-center shrink-0">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </div>`;
+            }
+
+            toast.classList.add(...borderClass.split(' '));
+
+            let actionHtml = '';
+            if (action && action.text) {
+                actionHtml = `
+                    <button class="toast-action-btn mt-2 py-1 px-2.5 rounded bg-brand-500/20 hover:bg-brand-500/30 text-brand-400 border border-brand-500/30 text-[10px] font-bold tracking-wide flex items-center gap-1.5 transition-all">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path></svg>
+                        ${action.text}
+                    </button>
+                `;
+            }
+
+            toast.innerHTML = `
+                ${iconSvg}
+                <div class="flex-1 min-w-0 pr-1">
+                    <h4 class="text-xs font-bold ${titleColor} leading-tight">${title}</h4>
+                    ${message ? `<p class="text-[11px] text-gray-400 mt-0.5 leading-snug break-words">${message}</p>` : ''}
+                    ${actionHtml}
+                </div>
+                <button onclick="this.parentElement.remove()" class="text-gray-500 hover:text-gray-300 p-0.5 rounded shrink-0">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            `;
+
+            if (action && typeof action.callback === 'function') {
+                const actBtn = toast.querySelector('.toast-action-btn');
+                if (actBtn) {
+                    actBtn.addEventListener('click', (ev) => {
+                        ev.stopPropagation();
+                        action.callback();
+                    });
+                }
+            }
+
+            container.appendChild(toast);
+
+            // Trigger animation in
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-x-8', 'opacity-0');
+            });
+
+            // Auto dismiss
+            setTimeout(() => {
+                toast.classList.add('translate-x-8', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        // Sub-tabs navigation for Right Sidebar
+        function switchRightTab(tabName) {
+            const tabs = ['legenda', 'composicao', 'transform'];
+            tabs.forEach(t => {
+                const pane = document.getElementById(`tabPane-${t}`);
+                const btn = document.getElementById(`tabBtn-${t}`);
+                if (pane) {
+                    pane.classList.toggle('hidden', t !== tabName);
+                }
+                if (btn) {
+                    if (t === tabName) {
+                        btn.className = 'py-1 text-[10px] font-bold rounded transition-all bg-dark-800 text-brand-500 border border-dark-600 shadow-sm';
+                    } else {
+                        btn.className = 'py-1 text-[10px] font-bold rounded transition-all text-gray-400 hover:text-gray-200';
+                    }
+                }
+            });
+        }
+        
+        // UI Binds
+        const binds = {
+            x: document.getElementById('sliderX'),
+            y: document.getElementById('sliderY'),
+            s: document.getElementById('sliderScale'),
+            ct: document.getElementById('cropT'),
+            cb: document.getElementById('cropB'),
+            cl: document.getElementById('cropL'),
+            cr: document.getElementById('cropR')
+        };
+        const labels = {
+            x: document.getElementById('valX'),
+            y: document.getElementById('valY'),
+            s: document.getElementById('valScale'),
+            ct: document.getElementById('valCropT'),
+            cb: document.getElementById('valCropB'),
+            cl: document.getElementById('valCropL'),
+            cr: document.getElementById('valCropR')
+        };
+
+        const globalYSlider = document.getElementById('globalYSlider');
+        const globalYLabel = document.getElementById('globalYLabel');
+
+        function appendLog(text) {
+            const terminalLog = document.getElementById('terminalLog');
+            terminalLog.innerHTML += text;
+            terminalLog.scrollTop = terminalLog.scrollHeight;
+        }
+
+        let videoSources = {};
+        const requestedVideo = new URLSearchParams(location.search).get('video');
+
+        async function reloadState() {
+            try {
+                const res = await fetch('/api/state');
+                const data = await res.json();
+                videos = data.videos;
+                videoSources = data.sources || {};
+                templatePath = data.template;
+
+                updateQueueCount();
+
+                if (templatePath) {
+                    mainTemplate.src = templatePath + '?v=' + Date.now();
+                    mainTemplate.classList.remove('hidden');
+                } else {
+                    mainTemplate.classList.add('hidden');
+                }
+
+                videos.forEach(v => {
+                    if (!configs[v]) {
+                        configs[v] = {
+                            filename: v,
+                            x_offset: 0,
+                            y_offset: parseInt(globalYSlider.value) || 0,
+                            scale: 1.0,
+                            crop_t: 0,
+                            crop_b: 0,
+                            crop_l: 0,
+                            crop_r: 0,
+                            comp_mode: "overlay",
+                            bg_color: document.getElementById('globalBgColor').value,
+                            no_border: false,
+                            flip: false,
+                            delete: false
+                        };
+                    }
+                });
+
+                renderGrid();
+                if (videos.length > 0 && !activeVideo) {
+                    selectVideo(videos.includes(requestedVideo) ? requestedVideo : videos[0]);
+                }
+            } catch (err) { console.error(err); }
+        }
+
+        function renderGrid() {
+            const container = document.getElementById('videoGridContainer');
+            const validVideos = videos.filter(v => !configs[v]?.delete);
+
+            if (validVideos.length === 0) {
+                container.innerHTML = '<p class="forge-queue-empty">Os vídeos importados aparecem aqui.</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            validVideos.forEach(vid => {
+                const c = configs[vid];
+                const card = document.createElement('div');
+                card.className = `forge-clip ${activeVideo === vid ? 'is-selected' : ''}`;
+
+                // Calculate preview CSS identically to the main preview
+                const pctX = (c.x_offset / 1080) * 100;
+                const pctY = (c.y_offset / 1920) * 100;
+                let transform = `translate(${pctX}%, ${pctY}%) scale(${c.scale})`;
+                if (c.flip) transform += ' scaleX(-1)';
+                const clipPath = `inset(${c.crop_t}% ${c.crop_r}% ${c.crop_b}% ${c.crop_l}%)`;
+                const objectFit = c.no_border ? 'cover' : 'contain';
+                
+                const tpl = c.template_path || templatePath;
+
+                card.innerHTML = `
+                    <button type="button" class="video-card-thumb cursor-pointer bg-dark-950" style="background-color: ${c.bg_color}">
+                        <div class="absolute inset-0 flex items-center justify-center overflow-hidden">
+                            <video src="/input/${vid}" class="absolute w-full h-full" style="transform: ${transform}; clip-path: ${clipPath}; object-fit: ${objectFit};" muted preload="metadata"></video>
+                        </div>
+                        ${tpl && c.comp_mode === 'crop_template' ? `<img src="${tpl}" class="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-80" style="z-index: 20;">` : ''}
+                        ${tpl && c.comp_mode === 'overlay' ? `<img src="${tpl}" class="absolute inset-0 w-full h-full object-cover pointer-events-none opacity-80" style="z-index: 0;">` : ''}
+                    </button>
+                    <p class="forge-clip-name"></p>
+                    
+                    <div class="grid grid-cols-4 gap-1 text-[9px] font-bold mb-1">
+                        <button title="Inverter vídeo horizontalmente (Espelhar)" onclick="toggleCardFlip('${vid}')" class="py-1 rounded border transition-colors ${c.flip ? 'bg-brand-500 text-black border-brand-500' : 'bg-dark-800 text-gray-400 border-dark-600 hover:bg-dark-700'}">FLIP</button>
+                        <button title="Sem Bordas (Preencher tela toda)" onclick="toggleCardNoBorder('${vid}')" class="py-1 rounded border transition-colors ${c.no_border ? 'bg-blue-500 text-white border-blue-500' : 'bg-dark-800 text-gray-400 border-dark-600 hover:bg-dark-700'}">SB</button>
+                        <div title="Posição X: ${c.x_offset}px / Y: ${c.y_offset}px" class="py-1 rounded bg-dark-950 text-brand-500 border border-dark-600 flex items-center justify-center font-mono">X:Y</div>
+                        <button title="Remover vídeo da lista" onclick="deleteCardVideo('${vid}')" class="py-1 rounded bg-brand-red/20 text-brand-red hover:bg-brand-red/40 border border-brand-red/20 flex items-center justify-center">✕</button>
+                    </div>
+                    <div class="grid grid-cols-4 gap-1 text-[11px] font-bold">
+                        <button title="Mover para cima" onclick="quickMove('${vid}', 0, -15)" class="py-1 rounded bg-brand-500/10 text-brand-500 hover:bg-brand-500/30">↑</button>
+                        <button title="Mover para baixo" onclick="quickMove('${vid}', 0, 15)" class="py-1 rounded bg-brand-500/10 text-brand-500 hover:bg-brand-500/30">↓</button>
+                        <button title="Mover para esquerda" onclick="quickMove('${vid}', -15, 0)" class="py-1 rounded bg-brand-500/10 text-brand-500 hover:bg-brand-500/30">←</button>
+                        <button title="Mover para direita" onclick="quickMove('${vid}', 15, 0)" class="py-1 rounded bg-brand-500/10 text-brand-500 hover:bg-brand-500/30">→</button>
+                    </div>
+                `;
+                const select = card.querySelector('.video-card-thumb');
+                select.setAttribute('aria-label', 'Selecionar ' + vid);
+                select.setAttribute('aria-pressed', String(activeVideo === vid));
+                select.addEventListener('click', () => selectVideo(vid));
+                const name = card.querySelector('.forge-clip-name');
+                name.title = vid;
+                name.textContent = vid.replace(/^instagram-/, '');
+                container.appendChild(card);
+            });
+        }
+
+        function selectVideo(filename) {
+            activeVideo = filename;
+            const previewName = document.getElementById('activePreviewName');
+            previewName.textContent = filename;
+            previewName.title = filename;
+            const source = videoSources[filename];
+            let sourceLink = document.getElementById('activeVideoSource');
+            if (!sourceLink) {
+                sourceLink = document.createElement('a');
+                sourceLink.id = 'activeVideoSource';
+                sourceLink.target = '_blank';
+                sourceLink.rel = 'noopener noreferrer';
+                sourceLink.className = 'text-xs text-brand-500 ml-2 underline';
+                previewName.after(sourceLink);
+            }
+            sourceLink.hidden = !source?.url || !/^https:\/\/www\.instagram\.com\/reel\/[A-Za-z0-9_-]+\/$/.test(source.url);
+            if (!sourceLink.hidden) {
+                sourceLink.href = source.url;
+                sourceLink.textContent = 'Ver Reel original';
+                sourceLink.title = source.caption || '';
+            }
+            const c = configs[filename];
+
+            mainVideo.src = `/input/${filename}`;
+            mainVideo.play().catch(() => {});
+            
+            // Set Caption Text
+            if (document.getElementById('captionText')) {
+                document.getElementById('captionText').value = c.caption_text || "";
+            }
+            
+            // Set template
+            const tpl = c.template_path || templatePath;
+            if (tpl) {
+                mainTemplate.src = tpl;
+                mainTemplate.classList.remove('hidden');
+            } else {
+                mainTemplate.classList.add('hidden');
+            }
+
+            // Update UI
+            binds.x.value = c.x_offset;
+            binds.y.value = c.y_offset;
+            binds.s.value = c.scale;
+            binds.ct.value = c.crop_t;
+            binds.cb.value = c.crop_b;
+            binds.cl.value = c.crop_l;
+            binds.cr.value = c.crop_r;
+
+            labels.x.textContent = c.x_offset + "px";
+            labels.y.textContent = c.y_offset + "px";
+            labels.s.textContent = c.scale.toFixed(2) + "x";
+            labels.ct.textContent = c.crop_t + "%";
+            labels.cb.textContent = c.crop_b + "%";
+            labels.cl.textContent = c.crop_l + "%";
+            labels.cr.textContent = c.crop_r + "%";
+
+            document.querySelector(`input[name="compMode"][value="${c.comp_mode}"]`).checked = true;
+
+            applyMainPreviewTransform();
+            renderGrid();
+        }
+
+        // --- MATH SYNCHRONIZATION WITH FFMPEG ---
+        // CSS is purely visual representation of FFmpeg complex filters
+        function applyMainPreviewTransform() {
+            if (!activeVideo) return;
+            const c = configs[activeVideo];
+            
+            // 1. Z-Index Mode
+            mainTemplate.style.zIndex = c.comp_mode === 'crop_template' ? '20' : '0';
+
+            // 2. CSS Transform (Position & Scale & Flip)
+            // 1080x1920 is the coordinate space logic
+            const pctX = (c.x_offset / 1080) * 100;
+            const pctY = (c.y_offset / 1920) * 100;
+            
+            let transform = `translate(${pctX}%, ${pctY}%) scale(${c.scale})`;
+            if (c.flip) transform += ' scaleX(-1)';
+            
+            mainVideo.style.transform = transform;
+            
+            // 3. No Border / Aspect
+            mainVideo.style.objectFit = c.no_border ? 'cover' : 'contain';
+
+            // 4. Crop using clip-path (percentage based)
+            mainVideo.style.clipPath = `inset(${c.crop_t}% ${c.crop_r}% ${c.crop_b}% ${c.crop_l}%)`;
+            
+            // Background
+            document.getElementById('previewCanvasWrapper').style.backgroundColor = c.bg_color;
+        }
+
+        // Binds Listeners
+        Object.keys(binds).forEach(k => {
+            binds[k].addEventListener('input', (e) => {
+                if(!activeVideo) return;
+                const v = parseFloat(e.target.value);
+                
+                if (k === 'x') { configs[activeVideo].x_offset = v; labels.x.textContent = v + "px"; }
+                if (k === 'y') { configs[activeVideo].y_offset = v; labels.y.textContent = v + "px"; }
+                if (k === 's') { configs[activeVideo].scale = v; labels.s.textContent = v.toFixed(2) + "x"; }
+                if (k === 'ct') { configs[activeVideo].crop_t = v; labels.ct.textContent = v + "%"; }
+                if (k === 'cb') { configs[activeVideo].crop_b = v; labels.cb.textContent = v + "%"; }
+                if (k === 'cl') { configs[activeVideo].crop_l = v; labels.cl.textContent = v + "%"; }
+                if (k === 'cr') { configs[activeVideo].crop_r = v; labels.cr.textContent = v + "%"; }
+
+                applyMainPreviewTransform();
+            });
+            binds[k].addEventListener('change', renderGrid);
+        });
+
+        // Actions
+        function updateMode(val) {
+            if(!activeVideo) return;
+            configs[activeVideo].comp_mode = val;
+            applyMainPreviewTransform();
+            renderGrid();
+        }
+
+        function quickMove(vid, dx, dy) {
+            configs[vid].x_offset += dx;
+            configs[vid].y_offset += dy;
+            if(activeVideo === vid) selectVideo(vid);
+            else renderGrid();
+        }
+
+        function centerAxis(axis) {
+            if(!activeVideo) return;
+            if(axis === 'x') configs[activeVideo].x_offset = 0;
+            if(axis === 'y') configs[activeVideo].y_offset = 0;
+            selectVideo(activeVideo);
+        }
+
+        async function generateCaptionAndLayout() {
+            if (!activeVideo) return;
+            const text = document.getElementById('captionText').value.trim();
+            if (!text) {
+                appendLog("[AVISO] Digite o texto da legenda primeiro.\n");
+                return;
+            }
+            
+            appendLog(`\n[CAPTION] Calculando layout inteligente para ${activeVideo}...\n`);
+            
+            try {
+                // 1. Faz o AutoCrop PRIMEIRO para descobrir o tamanho do vídeo original
+                const cropRes = await fetch('/api/autocrop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames: [activeVideo] })
+                });
+                const cropData = await cropRes.json();
+                
+                let cropT = 0, cropB = 0;
+                if(cropData[activeVideo]) {
+                    cropT = cropData[activeVideo].crop_t;
+                    cropB = cropData[activeVideo].crop_b;
+                    configs[activeVideo].crop_t = cropT;
+                    configs[activeVideo].crop_b = cropB;
+                    configs[activeVideo].crop_l = cropData[activeVideo].crop_l;
+                    configs[activeVideo].crop_r = cropData[activeVideo].crop_r;
+                }
+                
+                // 2. Define a posição inicial do texto (mais próximo do perfil)
+                const startYText = 430;
+                
+                // 3. Gera a imagem da legenda e descobre até onde o texto desceu
+                appendLog(`[CAPTION] Gerando legenda na altura Y=${startYText}...\n`);
+                const res = await fetch('/api/generate_caption', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: activeVideo, text: text, y_pos: startYText })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'ok') {
+                    // O backend retorna box_height como sendo a coordenada Y final do texto
+                    const textBottomY = data.box_height;
+                    
+                    // 4. Calcula Layout Matemático do Vídeo (Ancorado no Topo)
+                    const origH = 1920;
+                    const cropH = origH * (1 - (cropT / 100) - (cropB / 100));
+                    
+                    // O topo do vídeo fica logo abaixo do texto (com padding menor de 50px)
+                    const videoTopEdge = textBottomY + 50;
+                    
+                    // A altura máxima que o vídeo pode ter para não rasgar o papel de baixo (Y=1620)
+                    const maxVideoH = 1620 - videoTopEdge;
+                    
+                    let scale = maxVideoH / cropH;
+                    if (scale > 1.0) scale = 1.0; 
+                    
+                    configs[activeVideo].scale = parseFloat(scale.toFixed(2));
+                    
+                    // Calcula o y_offset para posicionar o topo do vídeo no videoTopEdge
+                    // Centro = Topo + metade da altura
+                    const centerY = videoTopEdge + (cropH * scale) / 2;
+                    configs[activeVideo].y_offset = Math.round(centerY - 960);
+                    
+                    configs[activeVideo].template_path = data.url;
+                    configs[activeVideo].caption_text = text;
+                    configs[activeVideo].comp_mode = 'overlay'; 
+                    
+                    if (document.getElementById('chkNoBorder')) {
+                        document.getElementById('chkNoBorder').checked = false;
+                    }
+                    
+                    appendLog(`[SUCESSO] Legenda criada! Vídeo posicionado abaixo do texto!\n`);
+                    showToast('Legenda Aplicada', 'Posição e escala do vídeo ajustadas com sucesso', 'success');
+                    selectVideo(activeVideo);
+                }
+            } catch (err) {
+                appendLog(`[ERRO] Falha ao gerar legenda: ${err.message}\n`);
+                showToast('Erro na Legenda', err.message, 'error');
+            }
+        }
+
+        async function applyBatchCaptionsAndLayout() {
+            const text = document.getElementById('batchCaptions').value.trim();
+            if (!text) {
+                appendLog("[AVISO] Nenhuma frase encontrada no lote.\n");
+                showToast('Nenhuma Frase', 'Digite ao menos uma frase no campo de lote', 'warning');
+                return;
+            }
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            if (lines.length === 0) return;
+
+            const validVideos = videos.filter(v => !configs[v].delete);
+            if (validVideos.length === 0) {
+                appendLog("[AVISO] Nenhum vídeo na fila para receber legendas.\n");
+                showToast('Fila Vazia', 'Adicione vídeos antes de aplicar legendas', 'warning');
+                return;
+            }
+
+            if(isProcessing) return;
+            isProcessing = true;
+            appendLog(`\n[LOTE] Gerando e aplicando legendas para ${validVideos.length} vídeo(s)...\n`);
+            showToast('Processando Lote', `Gerando legendas para ${validVideos.length} vídeo(s)...`, 'info');
+
+            try {
+                // 1. Batch AutoCrop para descobrir as bordas de todos de uma vez
+                appendLog(`[AUTOCROP] Analisando bordas de ${validVideos.length} vídeo(s)...\n`);
+                const cropRes = await fetch('/api/autocrop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames: validVideos })
+                });
+                const cropData = await cropRes.json();
+
+                // 2. Loop sobre os vídeos (Intercalando as frases)
+                for (let i = 0; i < validVideos.length; i++) {
+                    const vid = validVideos[i];
+                    const phrase = lines[i % lines.length]; // Distribui as frases repetindo se necessário
+                    
+                    let cropT = 0, cropB = 0;
+                    if (cropData[vid]) {
+                        cropT = cropData[vid].crop_t;
+                        cropB = cropData[vid].crop_b;
+                        configs[vid].crop_t = cropT;
+                        configs[vid].crop_b = cropB;
+                        configs[vid].crop_l = cropData[vid].crop_l;
+                        configs[vid].crop_r = cropData[vid].crop_r;
+                    }
+                    
+                    // Define a posição inicial do texto
+                    const startYText = 430;
+
+                    // Gera a imagem da legenda
+                    const capRes = await fetch('/api/generate_caption', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filename: vid, text: phrase, y_pos: startYText })
+                    });
+                    const capData = await capRes.json();
+
+                    if (capData.status === 'ok') {
+                        const textBottomY = capData.box_height;
+                        
+                        const origH = 1920;
+                        const cropH = origH * (1 - (cropT / 100) - (cropB / 100));
+                        
+                        const videoTopEdge = textBottomY + 50;
+                        const maxVideoH = 1620 - videoTopEdge;
+                        
+                        let scale = maxVideoH / cropH;
+                        if (scale > 1.0) scale = 1.0; 
+                        configs[vid].scale = parseFloat(scale.toFixed(2));
+                        
+                        const centerY = videoTopEdge + (cropH * scale) / 2;
+                        configs[vid].y_offset = Math.round(centerY - 960);
+                        
+                        configs[vid].template_path = capData.url;
+                        configs[vid].caption_text = phrase;
+                        configs[vid].comp_mode = 'overlay';
+                        
+                        if (document.getElementById('chkNoBorder')) {
+                            document.getElementById('chkNoBorder').checked = false;
+                        }
+                        
+                        appendLog(`[OK] ${vid} -> "${phrase}"\n`);
+                    }
+                }
+                
+                appendLog(`[SUCESSO] Lote de legendas finalizado com perfeição!\n`);
+                showToast('Legendas em Lote Aplicadas', `${validVideos.length} vídeos foram legendados e ajustados com sucesso`, 'success', 5000);
+            } catch (err) {
+                appendLog(`[ERRO] Falha no processamento em lote: ${err.message}\n`);
+                showToast('Erro no Lote', err.message, 'error');
+            } finally {
+                isProcessing = false;
+                renderGrid();
+                if(activeVideo) selectVideo(activeVideo);
+            }
+        }
+
+        function centerCardXY(vid) {
+            configs[vid].x_offset = 0;
+            configs[vid].y_offset = 0;
+            if(activeVideo === vid) selectVideo(vid);
+            else renderGrid();
+            showToast('Centralizado', 'Posição X e Y zeradas', 'info', 2000);
+        }
+
+        function resetUnitary() {
+            if(!activeVideo) return;
+            configs[activeVideo].x_offset = 0;
+            configs[activeVideo].y_offset = 0;
+            configs[activeVideo].scale = 1.0;
+            configs[activeVideo].crop_t = 0;
+            configs[activeVideo].crop_b = 0;
+            configs[activeVideo].crop_l = 0;
+            configs[activeVideo].crop_r = 0;
+            selectVideo(activeVideo);
+            showToast('Configurações Resetadas', 'Ajustes do vídeo atual voltaram ao padrão', 'info', 2500);
+        }
+
+        function toggleCardFlip(vid) {
+            configs[vid].flip = !configs[vid].flip;
+            if(activeVideo === vid) selectVideo(vid);
+            else renderGrid();
+        }
+
+        function toggleCardNoBorder(vid) {
+            configs[vid].no_border = !configs[vid].no_border;
+            if(activeVideo === vid) selectVideo(vid);
+            else renderGrid();
+        }
+
+        async function deleteCardVideo(vid) {
+            configs[vid].delete = true;
+            try {
+                await fetch(`/api/delete_video?filename=${encodeURIComponent(vid)}`, { method: 'POST' });
+            } catch(e) {}
+            
+            videos = videos.filter(v => v !== vid);
+            if(activeVideo === vid) {
+                const remaining = videos.filter(v => !configs[v]?.delete);
+                if(remaining.length > 0) selectVideo(remaining[0]);
+                else clearPreview();
+            }
+            renderGrid();
+            updateQueueCount();
+            showToast('Vídeo Excluído', `${vid} foi apagado do disco`, 'info', 2500);
+        }
+
+        async function clearAllVideosQueue() {
+            if (videos.length === 0) return;
+            try {
+                await fetch('/api/clear_all_videos', { method: 'POST' });
+                videos = [];
+                configs = {};
+                clearPreview();
+                updateQueueCount();
+                renderGrid();
+                showToast('Fila Limpa', 'Todos os vídeos foram removidos da pasta de entrada', 'success', 3000);
+            } catch(err) {
+                showToast('Erro', 'Falha ao limpar a fila', 'error');
+            }
+        }
+
+        function clearPreview() {
+            activeVideo = null;
+            mainVideo.removeAttribute('src');
+            mainVideo.load();
+            mainTemplate.classList.add('hidden');
+            const name = document.getElementById('activePreviewName');
+            name.textContent = 'Nenhum vídeo selecionado';
+            name.title = '';
+            const sourceLink = document.getElementById('activeVideoSource');
+            if (sourceLink) sourceLink.hidden = true;
+        }
+
+        function updateQueueCount() {
+            const label = videos.length === 1 ? 'vídeo' : 'vídeos';
+            document.getElementById('queueCounter').textContent = `${videos.length} ${label} na fila`;
+        }
+        
+        async function runAutoCropAPI(filenames) {
+            appendLog(`\n[AUTOCROP] Analisando bordas de ${filenames.length} vídeo(s) com OpenCV...\n`);
+            try {
+                const res = await fetch('/api/autocrop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filenames })
+                });
+                const data = await res.json();
+                
+                let successCount = 0;
+                for(let file of filenames) {
+                    if(data[file]) {
+                        configs[file].crop_t = data[file].crop_t;
+                        configs[file].crop_b = data[file].crop_b;
+                        configs[file].crop_l = data[file].crop_l;
+                        configs[file].crop_r = data[file].crop_r;
+                        successCount++;
+                    }
+                }
+                appendLog(`[AUTOCROP] Concluído para ${successCount} vídeo(s).\n`);
+                showToast('Auto-Crop Concluído', `${successCount} vídeo(s) tiveram as bordas recortadas`, 'success', 3500);
+                if(activeVideo) selectVideo(activeVideo);
+                else renderGrid();
+            } catch(e) {
+                appendLog(`[ERRO] Falha no AutoCrop: ${e}\n`);
+                showToast('Erro no Auto-Crop', 'Falha ao processar bordas dos vídeos', 'error');
+            }
+        }
+        
+        function autoCropAll() {
+            const validVideos = videos.filter(v => !configs[v]?.delete);
+            if(validVideos.length > 0) runAutoCropAPI(validVideos);
+        }
+        
+        function autoCropActive() {
+            if(activeVideo) runAutoCropAPI([activeVideo]);
+        }
+
+        // Globals
+        globalYSlider.addEventListener('input', (e) => {
+            const v = parseInt(e.target.value);
+            globalYLabel.textContent = v;
+            videos.forEach(vid => configs[vid].y_offset = v);
+            if(activeVideo) selectVideo(activeVideo);
+            else renderGrid();
+        });
+
+        function updateAllVideoBgs() {
+            const bg = document.getElementById('globalBgColor').value;
+            videos.forEach(vid => configs[vid].bg_color = bg);
+            applyMainPreviewTransform();
+        }
+
+        function updateGridColumns(cls) {
+            document.getElementById('videoGridContainer').style.setProperty('--queue-columns', cls);
+        }
+
+        async function openSystemFolder(type) {
+            await fetch(`/api/open_folder?folder_type=${type}`, { method: 'POST' });
+            showToast('Pasta Aberta', `Abrindo pasta de ${type === 'output' ? 'Saída' : 'Entrada'} no Windows Explorer`, 'info', 2500);
+        }
+
+        document.getElementById('videoFileInput').addEventListener('change', async (e) => {
+            const files = e.target.files;
+            if (!files || files.length === 0) return;
+            const formData = new FormData();
+            for (let f of files) formData.append('files', f);
+            appendLog(`\n[UPLOAD] Enviando ${files.length} vídeos...\n`);
+            showToast('Enviando Vídeos', `Carregando ${files.length} arquivo(s)...`, 'info');
+            try {
+                const res = await fetch('/api/upload_videos', { method: 'POST', body: formData });
+                const data = await res.json();
+                showToast('Upload Concluído', `${data.count || files.length} vídeo(s) adicionados com sucesso`, 'success', 3500);
+            } catch(err) {
+                showToast('Erro no Upload', err.message, 'error');
+            }
+            e.target.value = '';
+            reloadState();
+        });
+
+        document.getElementById('templateFileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            appendLog(`\n[TEMPLATE] Template PNG carregado com sucesso!\n`);
+            try {
+                await fetch('/api/upload_template', { method: 'POST', body: formData });
+                showToast('Template Carregado', 'Novo template Canva carregado com sucesso', 'success', 3500);
+            } catch(err) {
+                showToast('Erro no Template', err.message, 'error');
+            }
+            e.target.value = '';
+            reloadState();
+        });
+
+        document.getElementById('btnProcessAll').addEventListener('click', async () => {
+            if (isProcessing || videos.length === 0) return;
+            if (cloudMode) {
+                await queueCloud(videos.filter(name => configs[name] && !configs[name].delete).map(name => configs[name]));
+                return;
+            }
+
+            isProcessing = true;
+            const btn = document.getElementById('btnProcessAll');
+            const btnText = document.getElementById('btnProcessText');
+            btnText.textContent = "PROCESSANDO LOTE...";
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            appendLog('\n[SISTEMA] Iniciando renderização avançada com sincronização total...\n');
+            showToast('Processamento Iniciado', 'Renderizando vídeos da fila em segundo plano...', 'info');
+
+            const jobPayload = {
+                global_anti_hash: document.getElementById('chkAntiHash') ? document.getElementById('chkAntiHash').checked : false,
+                global_quality: document.querySelector('input[name="qual"]:checked') ? document.querySelector('input[name="qual"]:checked').value : '1080p',
+                global_audio_enhance: document.getElementById('chkAudioEnhance') ? document.getElementById('chkAudioEnhance').checked : false,
+                global_no_border: document.getElementById('chkNoBorder') ? document.getElementById('chkNoBorder').checked : false,
+                use_amd_gpu: document.getElementById('chkAmdGpu') ? document.getElementById('chkAmdGpu').checked : true,
+                videos: Object.values(configs)
+            };
+
+            await fetch('/api/setup_job', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(jobPayload)
+            });
+
+            const source = new EventSource('/api/process_stream');
+            source.onmessage = (e) => {
+                if (e.data === "[DONE]") {
+                    source.close();
+                    isProcessing = false;
+                    btnText.textContent = "Renderizar lote";
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    appendLog('<span class="text-brand-500 font-bold">\n[SUCESSO] Operação finalizada!</span>\n');
+                    showToast('Lote Concluído', 'Todos os vídeos foram forjados e salvos!', 'success', 8000, {
+                        text: 'Abrir Pasta de Saída',
+                        callback: () => openSystemFolder('output')
+                    });
+                } else {
+                    appendLog(e.data + '\n');
+                }
+            };
+            source.onerror = () => {
+                source.close();
+                isProcessing = false;
+                btnText.textContent = "Renderizar lote";
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                appendLog('\n[ERRO] Conexão SSE falhou.\n');
+                showToast('Erro no Processamento', 'A conexão de renderização foi interrompida', 'error');
+            };
+        });
+
+        async function renderSingleActive() {
+            if (!activeVideo || isProcessing) return;
+            if (cloudMode) {
+                await queueCloud([configs[activeVideo]]);
+                return;
+            }
+            const btn = document.getElementById('btnRenderSingle');
+            const span = btn.querySelector('span');
+            const originalText = span.textContent;
+            
+            span.textContent = "RENDERIZANDO...";
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            isProcessing = true;
+            appendLog(`\n[SISTEMA] Iniciando renderização única para: ${activeVideo}...\n`);
+            showToast('Renderizando Vídeo', `Processando "${activeVideo}" com aceleração GPU...`, 'info', 3000);
+            
+            try {
+                const jobPayload = {
+                    global_anti_hash: document.getElementById('chkAntiHash') ? document.getElementById('chkAntiHash').checked : false,
+                    global_quality: document.querySelector('input[name="qual"]:checked') ? document.querySelector('input[name="qual"]:checked').value : '1080p',
+                    global_audio_enhance: document.getElementById('chkAudioEnhance') ? document.getElementById('chkAudioEnhance').checked : false,
+                    global_no_border: document.getElementById('chkNoBorder') ? document.getElementById('chkNoBorder').checked : false,
+                    use_amd_gpu: document.getElementById('chkAmdGpu') ? document.getElementById('chkAmdGpu').checked : true
+                };
+
+                const res = await fetch('/api/render_single', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: activeVideo,
+                        config: configs[activeVideo],
+                        job_config: jobPayload
+                    })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'ok') {
+                    const savedFile = data.url.split('/').pop();
+                    appendLog(`[SUCESSO] Vídeo salvo na pasta 'output': ${savedFile}\n`);
+                    showToast('Vídeo Renderizado', `Salvo em output: ${savedFile}`, 'success', 8000, {
+                        text: 'Abrir Pasta de Saída',
+                        callback: () => openSystemFolder('output')
+                    });
+                } else {
+                    appendLog(`[ERRO] Falha ao renderizar: ${data.message}\n`);
+                    showToast('Falha na Renderização', data.message || 'Erro ao processar vídeo', 'error');
+                }
+            } catch (err) {
+                appendLog(`[ERRO] Erro na requisição: ${err.message}\n`);
+                showToast('Erro ao Renderizar', err.message, 'error');
+            } finally {
+                span.textContent = originalText;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                isProcessing = false;
+            }
+        }
+
+        const jobStates = {
+            queued: 'Na fila', preparing: 'Preparando arquivos', dispatching: 'Despachando',
+            dispatched: 'Enviado ao Actions', waiting: 'Aguardando runner', running: 'Renderizando',
+            done: 'Concluído', partial: 'Com falhas', failed: 'Falhou',
+        };
+        let cloudTimer;
+
+        async function cloudCall(path, options) {
+            const response = await fetch(path, options);
+            const data = await response.json();
+            if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Revise os dados do lote.');
+            return data;
+        }
+
+        async function queueCloud(clips) {
+            if (!clips.length || isProcessing) return;
+            isProcessing = true;
+            try {
+                const result = await cloudCall('/api/jobs', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        videos: clips,
+                        global_quality: document.querySelector('input[name="qual"]:checked').value,
+                        global_audio_enhance: Boolean(document.getElementById('chkAudioEnhance')?.checked),
+                        global_no_border: document.getElementById('chkNoBorder').checked,
+                    }),
+                });
+                document.getElementById('cloudHistory').open = true;
+                showToast('Lote na fila', 'O Actions renderiza os vídeos em paralelo.', 'success');
+                await watchCloud(result.batch_id);
+            } catch (err) {
+                showToast('Falha ao enviar lote', err.message, 'error');
+            } finally {
+                isProcessing = false;
+            }
+        }
+
+        async function watchCloud(id) {
+            clearTimeout(cloudTimer);
+            const batch = await cloudCall('/api/jobs/' + id);
+            const results = document.getElementById('cloudResults');
+            const title = document.createElement('p');
+            title.textContent = jobStates[batch.state] + ' · ' + batch.jobs.length + ' vídeos';
+            results.replaceChildren(title);
+            for (const job of batch.jobs) {
+                const row = document.createElement('p');
+                row.className = 'break-words';
+                row.textContent = job.name + ' · ' + jobStates[job.state] + ' ';
+                if (job.output_url) {
+                    const link = document.createElement('a');
+                    link.className = 'text-brand-400 underline';
+                    link.href = job.output_url;
+                    link.textContent = 'Baixar';
+                    row.append(link);
+                } else if (job.error) {
+                    row.title = job.error;
+                }
+                results.append(row);
+            }
+            if (!['done', 'partial', 'failed'].includes(batch.state)) {
+                cloudTimer = setTimeout(() => watchCloud(id).catch(err => {
+                    showToast('Erro ao consultar lote', err.message, 'error');
+                }), 5000);
+            }
+        }
+
+        if (cloudMode) {
+            document.getElementById('cloudHistory').addEventListener('toggle', async event => {
+                if (!event.target.open) return;
+                try {
+                    const batches = await cloudCall('/api/jobs');
+                    document.getElementById('cloudBatches').replaceChildren(...batches.slice(0, 8).map(batch => {
+                        const button = document.createElement('button');
+                        button.className = 'block text-left text-brand-400 hover:underline';
+                        button.textContent = new Date(batch.created * 1000).toLocaleString('pt-BR') + ' · ' + jobStates[batch.state];
+                        button.onclick = () => watchCloud(batch.id).catch(err => showToast('Erro ao consultar lote', err.message, 'error'));
+                        return button;
+                    }));
+                } catch (err) {
+                    showToast('Erro ao listar lotes', err.message, 'error');
+                }
+            });
+        }
+        reloadState();
+    </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+-r ghostreel/requirements.txt
+-r videoeditor/requirements.txt
+requests
+python-multipart
+opencv-python-headless
+Pillow
+itsdangerous==2.2.0
+mcp==1.30.0

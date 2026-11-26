@@ -1,0 +1,41 @@
+name: GhostForge Render
+run-name: Render ${{ inputs.batch }}
+on:
+  workflow_dispatch:
+    inputs:
+      batch:
+        required: true
+        type: string
+      jobs:
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: ghostforge-${{ inputs.batch }}
+  cancel-in-progress: false
+jobs:
+  render:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        job: ${{ fromJSON(inputs.jobs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Instalar FFmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Renderizar e salvar no Drive
+        env:
+          GHOSTFORGE_URL: ${{ vars.GHOSTFORGE_URL }}
+          GHOSTFORGE_RUNNER_TOKEN: ${{ secrets.GHOSTFORGE_RUNNER_TOKEN }}
+          RENDER_JOB: ${{ matrix.job }}
+        run: |
+          python -m venv /tmp/ghostforge-python
+          /tmp/ghostforge-python/bin/pip install --quiet requests==2.34.2
+          /tmp/ghostforge-python/bin/python runner.py

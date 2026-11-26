@@ -1,0 +1,46 @@
+x-ghostforge-env: &ghostforge-env
+  GHOSTFORGE_MODE: production
+  GHOSTFORGE_DATA: /data/cloud
+  REELS_EDITOR_INPUT: /data/input
+  REELS_EDITOR_OUTPUT: /data/output
+  REELS_DOWNLOAD_DIR: /data/downloads
+  REELS_SESSION_FILE: /data/cloud/session.json
+  GHOSTFORGE_PUBLIC_URL: ${GHOSTFORGE_PUBLIC_URL:?Configure URL publica HTTPS}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Configure OAuth do Drive}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Configure OAuth do Drive}
+  GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN:?Configure OAuth do Drive}
+  GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID:?Configure pasta do Drive}
+  GITHUB_RENDER_REPO: ${GITHUB_RENDER_REPO:?Configure repositorio Actions}
+  GITHUB_RENDER_TOKEN: ${GITHUB_RENDER_TOKEN:?Configure token Actions}
+  GITHUB_RENDER_REF: main
+services:
+  ghostforge:
+    build: .
+    restart: unless-stopped
+    init: true
+    expose: ["8782"]
+    volumes: ["ghostforge-data:/data"]
+    environment:
+      <<: *ghostforge-env
+      GHOSTFORGE_EMAIL: ${GHOSTFORGE_EMAIL:?Configure o e-mail}
+      GHOSTFORGE_PASSWORD_HASH: ${GHOSTFORGE_PASSWORD_HASH:?Configure o hash}
+      GHOSTFORGE_SESSION_SECRET: ${GHOSTFORGE_SESSION_SECRET:?Configure segredo de sessao}
+      GHOSTFORGE_API_TOKEN: ${GHOSTFORGE_API_TOKEN:?Configure token da API}
+      GHOSTFORGE_RUNNER_TOKEN: ${GHOSTFORGE_RUNNER_TOKEN:?Configure token dos runners}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8782/healthz', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+  orchestrator:
+    build: .
+    command: ["python", "cloud_worker.py"]
+    restart: unless-stopped
+    init: true
+    volumes: ["ghostforge-data:/data"]
+    environment: *ghostforge-env
+    depends_on:
+      ghostforge:
+        condition: service_healthy
+volumes:
+  ghostforge-data:

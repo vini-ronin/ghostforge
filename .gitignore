@@ -1,0 +1,10 @@
+.venv/
+**/__pycache__/
+.env*
+cloud-data/
+ghostreel/downloads/
+ghostreel/session.json
+videoeditor/input/*
+videoeditor/output/*
+!videoeditor/input/.gitkeep
+!videoeditor/output/.gitkeep

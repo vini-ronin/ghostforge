@@ -23,5 +23,9 @@ jobs:
           PYTHONPATH=. python tests/smoke.py
       - name: Validar imagem de implantação
         run: |
+          for key in GHOSTFORGE_PUBLIC_URL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN GOOGLE_DRIVE_FOLDER_ID GITHUB_RENDER_REPO GITHUB_RENDER_TOKEN GHOSTFORGE_EMAIL GHOSTFORGE_PASSWORD_HASH GHOSTFORGE_SESSION_SECRET GHOSTFORGE_API_TOKEN GHOSTFORGE_RUNNER_TOKEN; do
+            export "${key}=fixture"
+          done
+          docker compose config --quiet
           docker build -t ghostforge:check .
           docker run --rm ghostforge:check python -c 'import local; import cloud_worker'

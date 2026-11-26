@@ -37,6 +37,7 @@ def main():
                             "color=c=navy:s=180x320:r=24:d=0.75", str(source)], check=True)
             with TestClient(app, base_url="https://testserver", follow_redirects=False) as client:
                 assert client.get("/").status_code == 303
+                assert client.get("/static/logo.jpg").status_code == 200
                 assert client.get("/api/state").status_code == 401
                 assert client.get("/reels/api/session/status").status_code == 401
                 assert client.get("/input/Fixture.mp4").status_code == 401

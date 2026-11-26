@@ -1,5 +1,6 @@
 """Inicia o GhostForge com o explorador GhostReel integrado."""
 import argparse
+from urllib.parse import urlsplit
 
 import uvicorn
 
@@ -29,6 +30,14 @@ def startup():
         missing = [name for name in required if not cloud_auth.setting(name)]
         if missing:
             raise RuntimeError("Configure: " + ", ".join(missing))
+        site = urlsplit(cloud_auth.setting("GHOSTFORGE_PUBLIC_URL"))
+        if site.scheme != "https" or not site.hostname or site.username or site.path not in {"", "/"} or site.query or site.fragment:
+            raise RuntimeError("GHOSTFORGE_PUBLIC_URL deve ser a origem HTTPS do GhostForge.")
+        credentials = [cloud_auth.setting(name) for name in (
+            "GHOSTFORGE_SESSION_SECRET", "GHOSTFORGE_API_TOKEN", "GHOSTFORGE_RUNNER_TOKEN",
+        )]
+        if len(set(credentials)) != len(credentials):
+            raise RuntimeError("Use valores distintos para sessão, API e runners.")
     cloud_jobs.initialize()
 
 

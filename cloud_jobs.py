@@ -254,6 +254,7 @@ def complete(job_id: ID, info: Completion):
     except requests.RequestException:
         raise HTTPException(502, "O Drive não confirmou o arquivo.") from None
     with database() as db:
+        db.execute("BEGIN IMMEDIATE")
         job = job_row(db, job_id)
         if job["state"] == "done" and job["output_id"] == info.file_id:
             return {"status": "done"}
@@ -268,6 +269,7 @@ def complete(job_id: ID, info: Completion):
 @router.post("/runner/jobs/{job_id}/fail")
 def fail(job_id: ID):
     with database() as db:
+        db.execute("BEGIN IMMEDIATE")
         job = job_row(db, job_id)
         db.execute("UPDATE jobs SET state='failed',error='Falha no runner.',updated=? WHERE id=? AND state='running'",
                    (int(time.time()), job_id))

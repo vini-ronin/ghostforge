@@ -52,6 +52,8 @@ Use `Authorization: Bearer <GHOSTFORGE_API_TOKEN>` nos clientes.
 
 Para MCP stdio, registre um servidor `ghostforge` com o Python do ambiente virtual e o caminho absoluto de `cloud_mcp.py`. Injete `GHOSTFORGE_PUBLIC_URL` e `GHOSTFORGE_API_TOKEN` no ambiente do cliente MCP. As ferramentas são `list_inputs`, `import_from_drive`, `submit_render`, `list_batches` e `render_status`.
 
+Um agente pode chamar `list_inputs`, enviar `submit_render` com os itens de `batch.videos` e consultar o `batch_id` em `render_status`. Cada resultado concluído inclui `output_url` para download pela API autenticada. O download dos originais pelos runners passa pela VPS em streaming, com a autorização do Drive mantida no servidor.
+
 ### Operação
 
 - O workflow distribui um vídeo por job e permite até oito jobs em paralelo. Cada lote é uma execução separada.

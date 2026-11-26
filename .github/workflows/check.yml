@@ -21,3 +21,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg libglib2.0-0
           python -m pip install -r requirements-local.txt
           PYTHONPATH=. python tests/smoke.py
+      - name: Validar imagem de implantação
+        run: |
+          docker build -t ghostforge:check .
+          docker run --rm ghostforge:check python -c 'import local; import cloud_worker'

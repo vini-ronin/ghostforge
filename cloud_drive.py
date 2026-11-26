@@ -1,5 +1,7 @@
 """Transferências privadas para o Google Drive."""
 import mimetypes
+import threading
+import time
 from pathlib import Path
 
 import requests
@@ -8,15 +10,25 @@ from cloud_auth import setting
 
 FILES = "https://www.googleapis.com/drive/v3/files"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
+_token_lock = threading.Lock()
+_token = ""
+_expires_at = 0.0
 
 
 def headers() -> dict:
-    response = requests.post("https://oauth2.googleapis.com/token", data={
-        "client_id": setting("GOOGLE_CLIENT_ID"), "client_secret": setting("GOOGLE_CLIENT_SECRET"),
-        "refresh_token": setting("GOOGLE_REFRESH_TOKEN"), "grant_type": "refresh_token",
-    }, timeout=15)
-    response.raise_for_status()
-    return {"Authorization": "Bearer " + response.json()["access_token"]}
+    global _token, _expires_at
+    with _token_lock:
+        now = time.monotonic()
+        if now >= _expires_at:
+            response = requests.post("https://oauth2.googleapis.com/token", data={
+                "client_id": setting("GOOGLE_CLIENT_ID"), "client_secret": setting("GOOGLE_CLIENT_SECRET"),
+                "refresh_token": setting("GOOGLE_REFRESH_TOKEN"), "grant_type": "refresh_token",
+            }, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            _token = data["access_token"]
+            _expires_at = now + max(0, int(data.get("expires_in", 0)) - 60)
+        return {"Authorization": "Bearer " + _token}
 
 
 def upload_session(name: str, mime: str, size: int, auth: dict, properties: dict | None = None) -> str:

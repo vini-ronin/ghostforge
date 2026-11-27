@@ -187,6 +187,7 @@
                     </div>
                 </div>
                 <p id="errorMsg" class="font-mono text-xs dark:text-gray-300 text-slate-700 leading-relaxed break-words"></p>
+                <a id="errorProfileLink" class="hidden text-sm text-brand-500 underline" target="_blank" rel="noopener noreferrer">Abrir perfil no Instagram</a>
                 <div id="rawLogContainer" class="hidden mt-2 pt-2 border-t border-red-500/10">
                     <p class="font-mono text-[10px] text-gray-500 mb-1 uppercase" data-i18n="tech_log">Log Técnico:</p>
                     <div id="rawErrorMsg" class="font-mono text-[11px] text-red-500/90 dark:bg-black/60 bg-white p-3 max-h-24 overflow-y-auto break-all whitespace-pre-wrap border dark:border-white/5 border-red-200"></div>
@@ -477,12 +478,17 @@
         setLanguage(currentLang);
 
         fetch('api/session/status').then(r => r.json()).then(data => {
-            if (data.logged_in) {
+            if (data.provider === 'meta') {
+                document.getElementById('sessionStatusText').innerText = 'API META CONFIGURADA';
+                document.getElementById('btnOpenSessionModal').disabled = true;
+            } else if (data.logged_in) {
                 document.getElementById('sessionStatusText').innerText = `@${data.username.toUpperCase()} (LOGADO)`;
+            } else if (data.session_saved) {
+                document.getElementById('sessionStatusText').innerText = 'SESSÃO NÃO CONFIRMADA';
             }
         });
 
-        function fmt(n) { if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'K'; return n.toString(); }
+        function fmt(n) { if (n == null) return '—'; if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'K'; return n.toString(); }
         function fmtDur(s) { const m = Math.floor(s/60); return m + ':' + String(Math.floor(s%60)).padStart(2,'0'); }
         function toast(msg) { const t = document.getElementById('toast'); document.getElementById('toastMsg').innerText = msg; t.classList.remove('translate-y-20','opacity-0'); setTimeout(() => t.classList.add('translate-y-20','opacity-0'), 3500); }
 
@@ -523,7 +529,7 @@
                     sessionModal.classList.remove('flex');
                     document.getElementById('sessionInput').value = '';
                 } else {
-                    toast(data.message || 'Erro ao validar cookie.');
+                    toast(data.error || data.message || 'Erro ao validar cookie.');
                 }
             } catch(e) {
                 toast('Erro de conexão com o servidor.');
@@ -549,7 +555,7 @@
 
         function toggleSelectAll() {
             allSelected = !allSelected;
-            document.querySelectorAll('.reel-cb').forEach(cb => cb.checked = allSelected);
+            document.querySelectorAll('.reel-cb:enabled').forEach(cb => cb.checked = allSelected);
             updateSel();
         }
         document.getElementById('btnSelectAll').addEventListener('click', toggleSelectAll);
@@ -557,7 +563,7 @@
         function updateMetrics() {
             const totalViews = currentReels.reduce((a, c) => a + c.views, 0);
             const totalLikes = currentReels.reduce((a, c) => a + c.likes, 0);
-            document.getElementById('profViews').innerText = fmt(totalViews);
+            document.getElementById('profViews').innerText = fmt(currentReels.some(reel => reel.views != null) ? totalViews : null);
             document.getElementById('profLikes').innerText = fmt(totalLikes);
             document.getElementById('profPosts').innerText = currentReels.length;
 
@@ -693,7 +699,7 @@
 
             const tagInfo = reel.is_sidecar 
                 ? '<span class="text-white text-[10px] font-mono border border-blue-500/50 bg-blue-950/80 px-2 py-0.5 text-blue-300">CARROSSEL</span>'
-                : (reel.is_video ? '<span class="text-white text-[10px] font-mono border border-[#333] bg-black/80 px-2 py-0.5">' + fmtDur(reel.duration) + '</span>' : '<span class="text-white text-[10px] font-mono border border-[#333] bg-black/80 px-2 py-0.5">FOTO</span>');
+                : (reel.is_video ? '<span class="text-white text-[10px] font-mono border border-[#333] bg-black/80 px-2 py-0.5">' + (reel.duration == null ? reel.type_label : fmtDur(reel.duration)) + '</span>' : '<span class="text-white text-[10px] font-mono border border-[#333] bg-black/80 px-2 py-0.5">FOTO</span>');
 
             card.innerHTML = '<img src="api/proxy_image?url=' + encodeURIComponent(reel.thumbnail_url) + '" class="reel-thumb absolute inset-0 w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-opacity" loading="lazy" alt="">'
                 + '<div class="absolute inset-0 thumbnail-gradient flex flex-col justify-between p-3">'
@@ -720,13 +726,20 @@
                 + '</div>'
                 + '</div></div>';
             card.querySelector('.forge-card-caption').textContent = reel.caption || '';
-            card.querySelector('.forge-original').href = 'https://www.instagram.com/' + (reel.is_video ? 'reel/' : 'p/') + encodeURIComponent(reel.shortcode) + '/';
+            card.querySelector('.forge-original').href = /^https:\/\/(www\.)?instagram\.com\/(p|reel|tv)\//.test(reel.url || '') ? reel.url : 'https://www.instagram.com/p/' + encodeURIComponent(reel.shortcode) + '/';
+            if (reel.downloadable === false) {
+                card.querySelector('input').disabled = true;
+                const download = card.querySelector('.btn-single-dl');
+                download.disabled = true;
+                download.title = 'A Meta não disponibilizou o arquivo para download';
+                download.classList.add('opacity-40');
+            }
             card.querySelector('.reel-thumb').addEventListener('error', event => event.currentTarget.hidden = true);
 
             card.addEventListener('click', e => { 
                 if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'A' && !e.target.closest('a') && !e.target.closest('button')) { 
                     const cb = card.querySelector('input'); 
-                    cb.checked = !cb.checked; 
+                    if (!cb.disabled) cb.checked = !cb.checked;
                     updateSel(); 
                 } 
             });
@@ -736,7 +749,7 @@
                 e.stopPropagation();
                 triggerDownload(reel.shortcode);
             });
-            if (reel.is_video) {
+            if (reel.is_video && reel.downloadable !== false) {
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.className = 'forge-send text-xs font-medium p-1.5 bg-black/80 border border-white/10 text-white hover:border-brand-500';
@@ -875,6 +888,10 @@
                 
                 lastErrorText = (err.raw || err.message || JSON.stringify(err));
                 document.getElementById('errorMsg').innerText = err.message || err;
+                const profileLink = document.getElementById('errorProfileLink');
+                const handle = username.replace(/^@/, '');
+                profileLink.classList.toggle('hidden', !/^[\w.]{1,30}$/.test(handle));
+                profileLink.href = 'https://www.instagram.com/' + encodeURIComponent(handle) + '/';
                 if (err.raw && err.raw !== err.message) {
                     document.getElementById('rawErrorMsg').innerText = err.raw;
                     document.getElementById('rawLogContainer').classList.remove('hidden');

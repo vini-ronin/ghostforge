@@ -6,6 +6,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from datetime import datetime
 from urllib.parse import urlsplit
 import requests
 from fastapi import FastAPI, Request, BackgroundTasks, Query
@@ -24,6 +25,9 @@ DOWNLOAD_DIR = os.environ.get('REELS_DOWNLOAD_DIR', os.path.join(BASE_DIR, 'down
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 SESSION_FILE = os.environ.get('REELS_SESSION_FILE', os.path.join(BASE_DIR, 'session.json'))
+GRAPH_TOKEN = os.environ.get('REELS_GRAPH_TOKEN', '').strip()
+GRAPH_ACCOUNT = os.environ.get('REELS_GRAPH_ACCOUNT_ID', '').strip()
+GRAPH_VERSION = os.environ.get('REELS_GRAPH_VERSION', '').strip() or 'v27.0'
 EDITOR_INPUT = Path(os.environ.get('REELS_EDITOR_INPUT', Path(BASE_DIR).parent / 'videoeditor' / 'input')).resolve()
 EDITOR_URL = os.environ.get('REELS_EDITOR_URL', 'http://127.0.0.1:8782')
 
@@ -52,6 +56,8 @@ def get_direct_video_url(shortcode: str, cached_vurl: str = None) -> str:
         except Exception:
             pass
 
+    if GRAPH_TOKEN or GRAPH_ACCOUNT:
+        return None
     # 2. Busca URL atualizada via API Mobile
     try:
         sess = load_saved_session()
@@ -152,16 +158,41 @@ def proxy_image(url: str):
 
 @app.get('/api/session/status')
 def get_session_status():
+    if GRAPH_TOKEN or GRAPH_ACCOUNT:
+        return {'logged_in': False, 'provider': 'meta'}
     sess = load_saved_session()
     if sess.get('sessionid'):
-        return {'logged_in': True, 'username': sess.get('username', 'conectado')}
+        username = sess.get('username')
+        verified = bool(username and username != 'conectado')
+        return {'logged_in': verified, 'session_saved': True, 'username': username if verified else None}
     return {'logged_in': False}
+
+
+def instagram_error(response, operation):
+    code = response.status_code
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    message = data.get('message') if isinstance(data, dict) else None
+    if message in ('challenge_required', 'checkpoint_required'):
+        return f'O Instagram pediu uma verificação da conta. Conclua no Instagram e reconecte a sessão. (HTTP {code})'
+    if code == 429:
+        return 'O Instagram limitou as consultas. Aguarde e tente novamente. (HTTP 429)'
+    if code == 401 or message == 'login_required':
+        return f'O Instagram pediu login. Reconecte a sessão no GhostReel. (HTTP {code})'
+    if code == 403:
+        return 'O Instagram recusou o acesso para esta sessão. Confira sua conta no Instagram. (HTTP 403)'
+    return f'O Instagram não conseguiu {operation}. (HTTP {code})'
+
 
 @app.post('/api/session')
 async def save_session(req: SessionRequest):
     try:
         sid = req.sessionid.strip()
         user_id = sid.split('%3A')[0] if '%3A' in sid else sid.split(':')[0]
+        if not re.fullmatch(r'[0-9]+', user_id) or sid == user_id:
+            return JSONResponse(status_code=400, content={'error': 'Informe um cookie sessionid válido do Instagram.'})
         
         headers = {
             'User-Agent': 'Instagram 319.0.0.38.109 Android (33/13; 420dpi; 1080x2400; samsung; SM-G998B; p3s; exynos2100; en_US)',
@@ -170,19 +201,107 @@ async def save_session(req: SessionRequest):
         cookies = {'sessionid': sid, 'ds_user_id': user_id}
         r = requests.get(f'https://i.instagram.com/api/v1/users/{user_id}/info/', headers=headers, cookies=cookies, timeout=10)
         
-        username = 'conectado'
-        if r.status_code == 200:
-            username = r.json().get('user', {}).get('username', username)
+        if r.status_code != 200:
+            return JSONResponse(status_code=502, content={'error': instagram_error(r, 'confirmar a conta')})
+        username = (r.json().get('user') or {}).get('username')
+        if not username:
+            return JSONResponse(status_code=502, content={'error': 'O Instagram não confirmou a conta nesta sessão.'})
             
         save_session_data(sid, username, user_id)
         return {'status': 'success', 'username': username, 'message': f'Conta @{username} conectada com sucesso!'}
-    except Exception as e:
-        return JSONResponse(status_code=400, content={'error': str(e)})
+    except (requests.RequestException, ValueError):
+        return JSONResponse(status_code=502, content={'error': 'Não foi possível confirmar a sessão com o Instagram.'})
+
+def graph_profile_events(username: str, limit: int, media_type: str):
+    def event(kind, **values):
+        return 'data: ' + json.dumps({'type': kind, **values}) + '\n\n'
+
+    count = 0
+    cursor = None
+    seen = set()
+    try:
+        if not re.fullmatch(r'[A-Za-z0-9._]{1,30}', username):
+            raise ValueError('Informe um nome de usuário válido do Instagram.')
+        if not GRAPH_TOKEN or not re.fullmatch(r'[0-9]+', GRAPH_ACCOUNT) or not re.fullmatch(r'v[0-9]+\.[0-9]+', GRAPH_VERSION):
+            raise ValueError('Configure o ID da conta, o token e a versão da API Meta no GhostReel.')
+        with requests.Session() as session:
+            session.headers['Authorization'] = f'Bearer {GRAPH_TOKEN}'
+            while count < limit:
+                edge = f'media.limit({min(limit - count, 50)})'
+                if cursor:
+                    edge += f'.after({cursor})'
+                fields = (f'business_discovery.username({username}){{username,name,biography,followers_count,follows_count,'
+                          f'media_count,profile_picture_url,{edge}{{caption,media_type,media_product_type,media_url,'
+                          'thumbnail_url,permalink,timestamp,view_count,like_count,comments_count}}')
+                response = session.get(f'https://graph.facebook.com/{GRAPH_VERSION}/{GRAPH_ACCOUNT}',
+                                       params={'fields': fields}, timeout=15, allow_redirects=False)
+                if not response.ok:
+                    error = response.json().get('error', {})
+                    code = error.get('code')
+                    if code == 190:
+                        raise ValueError('A Meta recusou o token da integração. Atualize REELS_GRAPH_TOKEN.')
+                    raise ValueError(f'A Meta não disponibilizou @{username} ao Business Discovery. '
+                                     f'Confira o tipo de conta e as permissões. (HTTP {response.status_code})')
+                profile = response.json().get('business_discovery')
+                if not profile:
+                    raise ValueError(f'A Meta não retornou dados profissionais para @{username}.')
+                if cursor is None:
+                    yield event('profile', profile={
+                        'username': profile.get('username', username), 'full_name': profile.get('name', ''),
+                        'biography': profile.get('biography', ''), 'followers': profile.get('followers_count', 0),
+                        'following': profile.get('follows_count', 0), 'total_posts': profile.get('media_count', 0),
+                        'profile_pic_url': profile.get('profile_picture_url', ''), 'related_profiles': [],
+                    })
+                media = profile.get('media') or {}
+                batch = []
+                for item in media.get('data', []):
+                    is_video = item.get('media_type') == 'VIDEO'
+                    is_sidecar = item.get('media_type') == 'CAROUSEL_ALBUM'
+                    if media_type == 'reels' and item.get('media_product_type') != 'REELS':
+                        continue
+                    if media_type == 'carousels' and not is_sidecar:
+                        continue
+                    url = item.get('permalink') or ''
+                    match = re.fullmatch(r'https://(?:www\.)?instagram\.com/(?:p|reel|tv)/([A-Za-z0-9_-]+)/?(?:\?.*)?', url)
+                    if not match:
+                        continue
+                    media_url = item.get('media_url')
+                    video_url = media_url if is_video and valid_cdn(media_url) else None
+                    timestamp = item.get('timestamp')
+                    batch.append({
+                        'shortcode': match[1], 'username': username, 'url': url, 'video_url': video_url,
+                        'downloadable': bool(video_url), 'thumbnail_url': item.get('thumbnail_url') or ('' if is_video else media_url) or '',
+                        'views': item.get('view_count'), 'likes': item.get('like_count'), 'comments': item.get('comments_count'),
+                        'duration': None, 'caption': (item.get('caption') or '')[:120],
+                        'timestamp': int(datetime.fromisoformat(timestamp).timestamp()) if timestamp else 0,
+                        'is_video': is_video, 'is_sidecar': is_sidecar,
+                        'type_label': 'REEL' if item.get('media_product_type') == 'REELS' else 'VIDEO' if is_video else 'CARROSSEL' if is_sidecar else 'FOTO',
+                    })
+                    if count + len(batch) == limit:
+                        break
+                if batch:
+                    count += len(batch)
+                    yield event('reels_batch', reels=batch)
+                cursor = (media.get('paging') or {}).get('cursors', {}).get('after')
+                if not media.get('data') or not cursor or cursor in seen or not re.fullmatch(r'[A-Za-z0-9_+=/-]+', cursor):
+                    break
+                seen.add(cursor)
+        yield event('done', count=count)
+    except requests.RequestException:
+        yield event('error', error='A consulta à API Meta falhou. Tente novamente em instantes.')
+    except ValueError as error:
+        yield event('error', error=str(error) if not isinstance(error, json.JSONDecodeError) else 'A Meta devolveu uma resposta inválida.')
+
 
 @app.get('/api/scrape/stream')
 async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels'):
+    username = username.strip().removeprefix('@')
+    if GRAPH_TOKEN or GRAPH_ACCOUNT:
+        return StreamingResponse(graph_profile_events(username, min(limit, 9999), media_type), media_type='text/event-stream')
     async def event_generator():
         try:
+            if not re.fullmatch(r'[A-Za-z0-9._]{1,30}', username):
+                raise ValueError('Informe um nome de usuário válido do Instagram.')
             sess = load_saved_session()
             sid = sess.get('sessionid')
             user_id_cookie = sess.get('user_id') or (sid.split('%3A')[0] if sid and '%3A' in sid else '')
@@ -207,8 +326,10 @@ async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels
             profile_data = {}
             
             if r_user.status_code == 200:
-                u = r_user.json().get('data', {}).get('user', {})
+                u = (r_user.json().get('data') or {}).get('user') or {}
                 target_user_id = u.get('id')
+                if not target_user_id:
+                    raise ValueError(f'O Instagram não retornou dados para @{username}.')
                 
                 related = []
                 try:
@@ -234,10 +355,16 @@ async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels
                     'total_posts': u.get('edge_owner_to_timeline_media', {}).get('count', 0),
                     'related_profiles': related
                 }
+                if u.get('is_private') and u.get('followed_by_viewer') is False:
+                    raise ValueError(f'@{username} é privado para esta sessão.')
             else:
+                if r_user.status_code != 404:
+                    raise ValueError(instagram_error(r_user, f'consultar @{username}'))
                 r_lookup = s.get(f'https://i.instagram.com/api/v1/users/lookup/?q={username}', timeout=8)
                 if r_lookup.status_code == 200:
-                    u = r_lookup.json().get('user', {})
+                    u = r_lookup.json().get('user') or {}
+                    if not u.get('pk'):
+                        raise ValueError(f'O Instagram não retornou dados para @{username}.')
                     target_user_id = str(u.get('pk'))
                     profile_data = {
                         'username': u.get('username', username),
@@ -250,7 +377,9 @@ async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels
                         'related_profiles': []
                     }
                 else:
-                    raise Exception(f'Perfil @{username} não encontrado ou privado.')
+                    detail = instagram_error(r_lookup, f'consultar @{username}')
+                    raise ValueError(f'{detail} A consulta inicial respondeu HTTP 404. '
+                                     'Abra o perfil no Instagram ou configure a integração Meta para perfis profissionais.')
 
             yield f"data: {json.dumps({'type': 'profile', 'profile': profile_data})}\n\n"
             await asyncio.sleep(0.01)
@@ -268,6 +397,8 @@ async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels
                     if max_id:
                         payload['max_id'] = str(max_id)
                     r_clips = s.post('https://i.instagram.com/api/v1/clips/user/', data=payload, timeout=10)
+                    if r_clips.status_code != 200:
+                        raise ValueError(instagram_error(r_clips, 'listar os Reels'))
                     if r_clips.status_code == 200:
                         res = r_clips.json()
                         items = [c.get('media', {}) for c in res.get('items', [])]
@@ -278,6 +409,8 @@ async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels
                     if max_id:
                         url += f'?max_id={max_id}'
                     r_feed = s.get(url, timeout=10)
+                    if r_feed.status_code != 200:
+                        raise ValueError(instagram_error(r_feed, 'listar as publicações'))
                     if r_feed.status_code == 200:
                         res = r_feed.json()
                         items = res.get('items', [])

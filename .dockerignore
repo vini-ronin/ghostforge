@@ -8,4 +8,5 @@
 **/output
 **/downloads
 cloud-data
+tests/artifacts
 .github

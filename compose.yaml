@@ -27,6 +27,9 @@ services:
       GHOSTFORGE_SESSION_SECRET: ${GHOSTFORGE_SESSION_SECRET:?Configure segredo de sessao}
       GHOSTFORGE_API_TOKEN: ${GHOSTFORGE_API_TOKEN:?Configure token da API}
       GHOSTFORGE_RUNNER_TOKEN: ${GHOSTFORGE_RUNNER_TOKEN:?Configure token dos runners}
+      REELS_GRAPH_TOKEN: ${REELS_GRAPH_TOKEN:-}
+      REELS_GRAPH_ACCOUNT_ID: ${REELS_GRAPH_ACCOUNT_ID:-}
+      REELS_GRAPH_VERSION: ${REELS_GRAPH_VERSION:-v27.0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8782/healthz', timeout=3)"]
       interval: 20s

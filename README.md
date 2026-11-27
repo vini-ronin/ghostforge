@@ -58,7 +58,13 @@ Um agente pode chamar `list_inputs`, enviar `submit_render` com os itens de `bat
 
 - O workflow distribui um vídeo por job e permite até oito jobs em paralelo. Cada lote é uma execução separada.
 - Um erro explícito de envio aparece no lote. Um timeout de dispatch pode significar que o GitHub recebeu a chamada. A fila aguarda os runners para evitar duplicar a execução. Jobs sem resposta expiram após três horas. Envie novamente apenas os vídeos que falharam.
-- Configure o GhostReel em **Explorar Reels → Conectar conta IG**. A sessão de Instagram fica no volume privado da VPS. A senha do GhostForge e o token da API são credenciais distintas dessa sessão.
+- Em **Explorar Reels**, configure a integração oficial abaixo para contas profissionais. O botão de conexão por cookie atende à integração legada, cuja disponibilidade depende dos endpoints do Instagram.
+
+### Instagram Business Discovery
+
+Em um app Meta com Instagram API com Facebook Login, vincule uma conta profissional do Instagram a uma Página do Facebook. Gere um token de usuário autorizado com `instagram_basic`, `instagram_manage_insights` e `pages_read_engagement`; consulte a documentação para as permissões adicionais da sua configuração. Configure `REELS_GRAPH_TOKEN`, `REELS_GRAPH_ACCOUNT_ID` (ID da conta profissional que faz a consulta) e, opcionalmente, `REELS_GRAPH_VERSION` (padrão `v27.0`). Use as variáveis do processo local ou o painel do Coolify e reinicie o serviço.
+
+A consulta oficial cobre contas profissionais elegíveis. Métricas omitidas aparecem como indisponíveis. O download e o envio ao editor ficam disponíveis quando a Meta retorna a URL do vídeo. A Meta pode omitir a URL quando o criador desativa downloads ou quando o áudio tem restrições. [Documentação Business Discovery](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/business_discovery)
 
 ### Local
 

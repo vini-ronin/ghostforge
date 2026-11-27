@@ -2,6 +2,7 @@
 **/__pycache__/
 .env*
 cloud-data/
+tests/artifacts/
 ghostreel/downloads/
 ghostreel/session.json
 videoeditor/input/*

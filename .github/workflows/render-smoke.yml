@@ -1,0 +1,58 @@
+name: GhostForge Render de teste
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render ${{ matrix.quality }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - quality: 720p
+            dimensions: 720x1280
+            source: testsrc2
+          - quality: 1080p
+            dimensions: 1080x1920
+            source: smptebars
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Instalar FFmpeg se necessário
+        run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg)
+      - name: Renderizar e verificar vídeo sintético
+        env:
+          QUALITY: ${{ matrix.quality }}
+          DIMENSIONS: ${{ matrix.dimensions }}
+          SOURCE: ${{ matrix.source }}
+        run: |
+          ffmpeg -nostdin -v error -f lavfi -i "${SOURCE}=size=360x640:rate=24:duration=2" -c:v libx264 -pix_fmt yuv420p original.mp4
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+          from videoeditor.render_command import build
+
+          output = Path(f"ghostforge-{os.environ['QUALITY']}.mp4")
+          subprocess.run(build(Path("original.mp4"), None, output,
+                               {"x_offset": 24, "scale": 0.9}, {"global_quality": os.environ['QUALITY']}), check=True)
+          subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", str(output), "-f", "null", "-"], check=True)
+          stream = subprocess.check_output([
+              "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name,width,height",
+              "-of", "csv=p=0", str(output),
+          ], text=True).strip()
+          assert stream == "h264," + os.environ["DIMENSIONS"].replace("x", ","), stream
+          print(f"{output}: {stream}, {output.stat().st_size} bytes")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ghostforge-${{ matrix.quality }}
+          path: ghostforge-${{ matrix.quality }}.mp4
+          if-no-files-found: error
+          retention-days: 3

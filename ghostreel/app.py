@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from typing import Literal
 from urllib.parse import urlsplit
 import requests
 from fastapi import FastAPI, Request, BackgroundTasks, Query
@@ -46,7 +47,9 @@ def save_session_data(sid: str, username: str = None, user_id: str = None):
         json.dump(data, f)
     return data
 
-def get_direct_video_url(shortcode: str, cached_vurl: str = None) -> str:
+def get_direct_video_url(shortcode: str, cached_vurl: str = None, provider: str = 'cookie') -> str | None:
+    if provider == 'meta':
+        return cached_vurl if valid_cdn(cached_vurl) else None
     # 1. Se URL do CDN foi fornecida e ainda responde OK
     if valid_cdn(cached_vurl):
         try:
@@ -56,8 +59,6 @@ def get_direct_video_url(shortcode: str, cached_vurl: str = None) -> str:
         except Exception:
             pass
 
-    if GRAPH_TOKEN or GRAPH_ACCOUNT:
-        return None
     # 2. Busca URL atualizada via API Mobile
     try:
         sess = load_saved_session()
@@ -88,13 +89,13 @@ def valid_cdn(url: str | None) -> bool:
         return False
 
 
-def cached_video(shortcode: str, cached_url: str | None) -> Path | None:
+def cached_video(shortcode: str, cached_url: str | None, provider: str = 'cookie') -> Path | None:
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", shortcode):
         return None
     target = Path(DOWNLOAD_DIR) / f"{shortcode}.mp4"
     if target.is_file() and target.stat().st_size > 1000:
         return target
-    url = get_direct_video_url(shortcode, cached_url)
+    url = get_direct_video_url(shortcode, cached_url, provider)
     if not valid_cdn(url):
         return None
     with requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, stream=True,
@@ -119,6 +120,7 @@ class DownloadItem(BaseModel):
     shortcode: str
     video_url: str = None
     url: str = None
+    provider: Literal['cookie', 'meta'] = 'cookie'
 
 class DownloadRequest(BaseModel):
     items: list[DownloadItem]
@@ -158,14 +160,13 @@ def proxy_image(url: str):
 
 @app.get('/api/session/status')
 def get_session_status():
-    if GRAPH_TOKEN or GRAPH_ACCOUNT:
-        return {'logged_in': False, 'provider': 'meta'}
     sess = load_saved_session()
+    status = {'meta_configured': bool(GRAPH_TOKEN), 'provider': 'meta' if GRAPH_TOKEN else 'cookie'}
     if sess.get('sessionid'):
         username = sess.get('username')
         verified = bool(username and username != 'conectado')
-        return {'logged_in': verified, 'session_saved': True, 'username': username if verified else None}
-    return {'logged_in': False}
+        return {**status, 'logged_in': verified, 'session_saved': True, 'username': username if verified else None}
+    return {**status, 'logged_in': False}
 
 
 def instagram_error(response, operation):
@@ -212,6 +213,42 @@ async def save_session(req: SessionRequest):
     except (requests.RequestException, ValueError):
         return JSONResponse(status_code=502, content={'error': 'Não foi possível confirmar a sessão com o Instagram.'})
 
+def graph_account_id(session: requests.Session) -> str:
+    if GRAPH_ACCOUNT:
+        if not re.fullmatch(r'[0-9]+', GRAPH_ACCOUNT):
+            raise ValueError('REELS_GRAPH_ACCOUNT_ID deve ser o ID numérico da conta profissional.')
+        return GRAPH_ACCOUNT
+
+    accounts = set()
+    seen = set()
+    params = {'fields': 'instagram_business_account', 'limit': 50}
+    while True:
+        response = session.get(f'https://graph.facebook.com/{GRAPH_VERSION}/me/accounts',
+                               params=params.copy(), timeout=15, allow_redirects=False)
+        data = response.json()
+        if response.status_code != 200:
+            if data.get('error', {}).get('code') == 190:
+                raise ValueError('A Meta recusou o token. Atualize REELS_GRAPH_TOKEN.')
+            raise ValueError('A Meta não listou as Páginas. Use um token de usuário com pages_show_list.')
+        for page in data.get('data', []):
+            account = str((page.get('instagram_business_account') or {}).get('id', ''))
+            if re.fullmatch(r'[0-9]+', account):
+                accounts.add(account)
+        if len(accounts) > 1:
+            raise ValueError('O token dá acesso a várias contas profissionais. Configure REELS_GRAPH_ACCOUNT_ID.')
+        paging = data.get('paging') or {}
+        if not paging.get('next'):
+            break
+        cursor = (paging.get('cursors') or {}).get('after')
+        if not cursor or cursor in seen:
+            raise ValueError('A Meta não concluiu a listagem. Configure REELS_GRAPH_ACCOUNT_ID.')
+        seen.add(cursor)
+        params['after'] = cursor
+    if not accounts:
+        raise ValueError('Nenhuma Página acessível pelo token tem uma conta profissional do Instagram vinculada.')
+    return accounts.pop()
+
+
 def graph_profile_events(username: str, limit: int, media_type: str):
     def event(kind, **values):
         return 'data: ' + json.dumps({'type': kind, **values}) + '\n\n'
@@ -222,10 +259,11 @@ def graph_profile_events(username: str, limit: int, media_type: str):
     try:
         if not re.fullmatch(r'[A-Za-z0-9._]{1,30}', username):
             raise ValueError('Informe um nome de usuário válido do Instagram.')
-        if not GRAPH_TOKEN or not re.fullmatch(r'[0-9]+', GRAPH_ACCOUNT) or not re.fullmatch(r'v[0-9]+\.[0-9]+', GRAPH_VERSION):
-            raise ValueError('Configure o ID da conta, o token e a versão da API Meta no GhostReel.')
+        if not GRAPH_TOKEN or not re.fullmatch(r'v[0-9]+\.[0-9]+', GRAPH_VERSION):
+            raise ValueError('Configure REELS_GRAPH_TOKEN e confira a versão da API Meta.')
         with requests.Session() as session:
             session.headers['Authorization'] = f'Bearer {GRAPH_TOKEN}'
+            account = graph_account_id(session)
             while count < limit:
                 edge = f'media.limit({min(limit - count, 50)})'
                 if cursor:
@@ -233,7 +271,7 @@ def graph_profile_events(username: str, limit: int, media_type: str):
                 fields = (f'business_discovery.username({username}){{username,name,biography,followers_count,follows_count,'
                           f'media_count,profile_picture_url,{edge}{{caption,media_type,media_product_type,media_url,'
                           'thumbnail_url,permalink,timestamp,view_count,like_count,comments_count}}')
-                response = session.get(f'https://graph.facebook.com/{GRAPH_VERSION}/{GRAPH_ACCOUNT}',
+                response = session.get(f'https://graph.facebook.com/{GRAPH_VERSION}/{account}',
                                        params={'fields': fields}, timeout=15, allow_redirects=False)
                 if not response.ok:
                     error = response.json().get('error', {})
@@ -269,7 +307,7 @@ def graph_profile_events(username: str, limit: int, media_type: str):
                     video_url = media_url if is_video and valid_cdn(media_url) else None
                     timestamp = item.get('timestamp')
                     batch.append({
-                        'shortcode': match[1], 'username': username, 'url': url, 'video_url': video_url,
+                        'shortcode': match[1], 'username': username, 'url': url, 'video_url': video_url, 'provider': 'meta',
                         'downloadable': bool(video_url), 'thumbnail_url': item.get('thumbnail_url') or ('' if is_video else media_url) or '',
                         'views': item.get('view_count'), 'likes': item.get('like_count'), 'comments': item.get('comments_count'),
                         'duration': None, 'caption': (item.get('caption') or '')[:120],
@@ -294,9 +332,10 @@ def graph_profile_events(username: str, limit: int, media_type: str):
 
 
 @app.get('/api/scrape/stream')
-async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels'):
+async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels',
+                        provider: Literal['meta', 'cookie'] | None = None):
     username = username.strip().removeprefix('@')
-    if GRAPH_TOKEN or GRAPH_ACCOUNT:
+    if (provider or ('meta' if GRAPH_TOKEN else 'cookie')) == 'meta':
         return StreamingResponse(graph_profile_events(username, min(limit, 9999), media_type), media_type='text/event-stream')
     async def event_generator():
         try:
@@ -487,9 +526,9 @@ async def scrape_stream(username: str, limit: int = 12, media_type: str = 'reels
 
 # Download individual direto para o navegador com salvamento local
 @app.get('/api/download_video/{shortcode}')
-def download_single_video(shortcode: str, vurl: str = None):
+def download_single_video(shortcode: str, vurl: str = None, provider: Literal['cookie', 'meta'] = 'cookie'):
     try:
-        target_path = cached_video(shortcode, vurl)
+        target_path = cached_video(shortcode, vurl, provider)
         if target_path:
             return FileResponse(target_path, filename=f"{shortcode}.mp4", media_type="video/mp4")
     except (requests.RequestException, OSError):
@@ -505,7 +544,7 @@ def download_zip(req: DownloadRequest, background_tasks: BackgroundTasks):
         with zipfile.ZipFile(filename, 'w', zipfile.ZIP_STORED) as archive:
             for item in req.items:
                 try:
-                    media = cached_video(item.shortcode, item.video_url)
+                    media = cached_video(item.shortcode, item.video_url, item.provider)
                     if media:
                         archive.write(media, arcname=media.name)
                 except (requests.RequestException, OSError):

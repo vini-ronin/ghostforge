@@ -108,6 +108,10 @@
                 </button>
 
                 <!-- Session Modal Trigger -->
+                <select id="searchProvider" aria-label="Integração do Instagram" class="input-bg border px-2 py-1 text-xs">
+                    <option value="cookie">Sessão do Instagram</option>
+                    <option value="meta">Token Meta</option>
+                </select>
                 <button id="btnOpenSessionModal" class="border dark:border-[#2a2a2a] border-slate-300 hover:border-brand-500 dark:text-gray-300 text-slate-700 hover:text-brand-500 px-3 py-1.5 dark:bg-[#080808] bg-slate-100 font-mono text-xs flex items-center gap-2 transition-colors">
                     <svg class="w-3.5 h-3.5 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
                     <span id="sessionStatusText" data-i18n="btn_connect_ig">CONECTAR CONTA IG</span>
@@ -477,11 +481,15 @@
         setTheme(currentTheme);
         setLanguage(currentLang);
 
+        const searchProvider = document.getElementById('searchProvider');
+        const cookieButton = document.getElementById('btnOpenSessionModal');
+        searchProvider.addEventListener('change', () => {
+            cookieButton.classList.toggle('hidden', searchProvider.value === 'meta');
+        });
         fetch('api/session/status').then(r => r.json()).then(data => {
-            if (data.provider === 'meta') {
-                document.getElementById('sessionStatusText').innerText = 'API META CONFIGURADA';
-                document.getElementById('btnOpenSessionModal').disabled = true;
-            } else if (data.logged_in) {
+            searchProvider.value = data.provider;
+            cookieButton.classList.toggle('hidden', searchProvider.value === 'meta');
+            if (data.logged_in) {
                 document.getElementById('sessionStatusText').innerText = `@${data.username.toUpperCase()} (LOGADO)`;
             } else if (data.session_saved) {
                 document.getElementById('sessionStatusText').innerText = 'SESSÃO NÃO CONFIRMADA';
@@ -610,7 +618,7 @@
             toast(i18n[currentLang]['toast_dl_started'].replace('{code}', shortcode));
             
             // Dispara download direto no navegador (Chrome mostra a barra de download)
-            const downloadUrl = `api/download_video/${shortcode}?vurl=${encodeURIComponent(reel.video_url || '')}`;
+            const downloadUrl = `api/download_video/${shortcode}?vurl=${encodeURIComponent(reel.video_url || '')}&provider=${reel.provider || 'cookie'}`;
             const link = document.createElement('a');
             link.href = downloadUrl;
             link.download = `${shortcode}.mp4`;
@@ -826,7 +834,7 @@
             activeAbortController = new AbortController();
 
             try {
-                const response = await fetch(`api/scrape/stream?username=${encodeURIComponent(username)}&limit=${limit}&media_type=${mediaType}`, {
+                const response = await fetch(`api/scrape/stream?username=${encodeURIComponent(username)}&limit=${limit}&media_type=${mediaType}&provider=${searchProvider.value}`, {
                     signal: activeAbortController.signal
                 });
 
@@ -915,6 +923,7 @@
                 return {
                     shortcode: r.shortcode,
                     video_url: r.video_url,
+                    provider: r.provider || 'cookie',
                     url: r.url
                 };
             });

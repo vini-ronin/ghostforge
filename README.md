@@ -62,7 +62,9 @@ Um agente pode chamar `list_inputs`, enviar `submit_render` com os itens de `bat
 
 ### Instagram Business Discovery
 
-Em um app Meta com Instagram API com Facebook Login, vincule uma conta profissional do Instagram a uma Página do Facebook. Gere um token de usuário autorizado com `instagram_basic`, `instagram_manage_insights` e `pages_read_engagement`; consulte a documentação para as permissões adicionais da sua configuração. Configure `REELS_GRAPH_TOKEN`, `REELS_GRAPH_ACCOUNT_ID` (ID da conta profissional que faz a consulta) e, opcionalmente, `REELS_GRAPH_VERSION` (padrão `v27.0`). Use as variáveis do processo local ou o painel do Coolify e reinicie o serviço.
+No seletor de **Explorar Reels**, escolha **Sessão do Instagram** para usar o cookie `sessionid` ou **Token Meta** para usar a API oficial. A opção por sessão depende da disponibilidade da integração legada do Instagram. O seletor continua disponível quando o token está configurado.
+
+Em um app Meta com Instagram API com Facebook Login, vincule uma conta profissional do Instagram a uma Página do Facebook. Gere um token de usuário autorizado com `instagram_basic`, `instagram_manage_insights`, `pages_read_engagement` e `pages_show_list` para localizar a conta automaticamente. Configure `REELS_GRAPH_TOKEN` no ambiente do processo local ou no Coolify e reinicie o serviço. Se o token tiver acesso a uma única conta profissional vinculada, basta o token. Para escolher entre várias contas, configure `REELS_GRAPH_ACCOUNT_ID` com o ID da conta que fará a consulta. `REELS_GRAPH_VERSION` é opcional (padrão `v27.0`). [Listagem de Páginas da Meta](https://www.postman.com/meta/instagram/http-request/23987686-78137ba3-2f22-4f9d-a67d-b594e7c1df01)
 
 A consulta oficial cobre contas profissionais elegíveis. Métricas omitidas aparecem como indisponíveis. O download e o envio ao editor ficam disponíveis quando a Meta retorna a URL do vídeo. A Meta pode omitir a URL quando o criador desativa downloads ou quando o áudio tem restrições. [Documentação Business Discovery](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-user/business_discovery)
 
